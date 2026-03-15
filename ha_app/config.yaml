@@ -33,11 +33,9 @@ devices:
   - /dev/input
 
 # Options schema (configurable by user in HA UI)
+# Format: key: type_string (see https://developers.home-assistant.io/docs/add-ons/configuration/#options--schema)
 schema:
-  port:
-    type: integer
-    default: 8765
-    description: "Web server port"
+  port: "int(1,65535)"
 
 # App options defaults
 options:
