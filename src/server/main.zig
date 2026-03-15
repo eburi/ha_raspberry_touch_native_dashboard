@@ -7,6 +7,16 @@
 ///!   GET /api/config    → app configuration
 ///!   GET /api/ha/states → proxy to HA REST API
 ///!   WS  /ws            → WebSocket for real-time HA state relay
+///!
+///! NOTE: We do NOT use facil.io's `public_folder` for static file serving.
+///! Instead, all files are served explicitly in onRequest with proper Content-Type
+///! headers. This is necessary because:
+///!   1. facil.io's public_folder bypasses onRequest entirely for matched files,
+///!      preventing us from normalizing paths (e.g. "//" → "/") or adding headers.
+///!   2. HA's ingress proxy produces "//" paths (from ingress_entry: "/"),
+///!      which must be normalized before file lookup.
+///!   3. We need guaranteed Content-Type headers for HA ingress to work
+///!      (without Content-Type, the iframe triggers a download instead of rendering).
 
 const std = @import("std");
 const zap = @import("zap");
@@ -22,6 +32,29 @@ pub const Config = struct {
 };
 
 var config: Config = .{};
+
+/// MIME type lookup by file extension
+fn getMimeType(path: []const u8) []const u8 {
+    const ext = std.fs.path.extension(path);
+    if (std.mem.eql(u8, ext, ".html") or std.mem.eql(u8, ext, ".htm")) return "text/html; charset=utf-8";
+    if (std.mem.eql(u8, ext, ".js")) return "application/javascript; charset=utf-8";
+    if (std.mem.eql(u8, ext, ".css")) return "text/css; charset=utf-8";
+    if (std.mem.eql(u8, ext, ".wasm")) return "application/wasm";
+    if (std.mem.eql(u8, ext, ".json")) return "application/json; charset=utf-8";
+    if (std.mem.eql(u8, ext, ".png")) return "image/png";
+    if (std.mem.eql(u8, ext, ".jpg") or std.mem.eql(u8, ext, ".jpeg")) return "image/jpeg";
+    if (std.mem.eql(u8, ext, ".svg")) return "image/svg+xml";
+    if (std.mem.eql(u8, ext, ".ico")) return "image/x-icon";
+    return "application/octet-stream";
+}
+
+/// Serve a static file with the correct Content-Type header.
+/// Returns true if the file was found and sent, false otherwise.
+fn serveStaticFile(r: zap.Request, file_path: []const u8) bool {
+    r.setHeader("content-type", getMimeType(file_path)) catch {};
+    r.sendFile(file_path) catch return false;
+    return true;
+}
 
 pub fn main() !void {
     var gpa = std.heap.GeneralPurposeAllocator(.{}){};
@@ -41,20 +74,14 @@ pub fn main() !void {
     // Initialize WebSocket handler
     websocket.init(allocator);
 
-    // Register custom MIME types (must happen before listen)
-    // .wasm → application/wasm (required for WebAssembly.instantiateStreaming)
-    const fio = zap.fio;
-    const wasm_mime = fio.fiobj_str_new("application/wasm", 16);
-    fio.http_mimetype_register(@constCast("wasm"), 4, wasm_mime);
-
-    // Set up the Zap listener
+    // Set up the Zap listener — NO public_folder (we serve files manually)
     var listener = zap.HttpListener.init(.{
         .port = @as(usize, config.port),
         .on_request = onRequest,
         .on_response = null,
         .log = false,
         .max_clients = @as(isize, 100),
-        .public_folder = config.web_root,
+        .public_folder = null,
     });
 
     try listener.listen();
@@ -70,7 +97,17 @@ pub fn main() !void {
 }
 
 fn onRequest(r: zap.Request) anyerror!void {
-    const path = r.path orelse "/";
+    const raw_path = r.path orelse "/";
+
+    // Normalize path: collapse multiple leading slashes to one
+    // (HA ingress can produce "//" when ingress_entry is "/")
+    var path = raw_path;
+    while (path.len > 1 and path[0] == '/' and path[1] == '/') {
+        path = path[1..];
+    }
+
+    // Log request for debugging ingress issues
+    std.log.info("Request: {s} -> {s}", .{ raw_path, path });
 
     // WebSocket upgrade
     if (std.mem.eql(u8, path, "/ws")) {
@@ -94,18 +131,40 @@ fn onRequest(r: zap.Request) anyerror!void {
 
     // Serve index.html for root path
     if (std.mem.eql(u8, path, "/")) {
-        // Construct path: {web_root}/index.html
         var buf: [512]u8 = undefined;
         const index_path = std.fmt.bufPrint(&buf, "{s}/index.html", .{config.web_root}) catch "web/index.html";
-        r.sendFile(index_path) catch {
+        if (!serveStaticFile(r, index_path)) {
             r.setStatus(.not_found);
             r.sendBody("Not found") catch {};
-        };
+        }
         return;
     }
 
-    // Static files are handled by Zap's public_folder automatically
-    // If we get here, the file wasn't found
+    // Static file serving: map URL path to web_root filesystem path
+    // Path starts with "/" — strip it and join with web_root
+    if (path.len > 1 and path[0] == '/') {
+        const rel_path = path[1..];
+
+        // Security: reject paths with ".." to prevent directory traversal
+        if (std.mem.indexOf(u8, rel_path, "..") != null) {
+            r.setStatus(.forbidden);
+            r.sendBody("Forbidden") catch {};
+            return;
+        }
+
+        var buf: [512]u8 = undefined;
+        const file_path = std.fmt.bufPrint(&buf, "{s}/{s}", .{ config.web_root, rel_path }) catch {
+            r.setStatus(.internal_server_error);
+            r.sendBody("Path too long") catch {};
+            return;
+        };
+
+        if (serveStaticFile(r, file_path)) {
+            return;
+        }
+    }
+
+    // Nothing matched
     r.setStatus(.not_found);
     r.sendBody("Not found") catch {};
 }
