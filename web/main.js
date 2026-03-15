@@ -3,6 +3,11 @@
  *
  * Loads the WASM binary, sets up the Canvas, routes mouse/touch input
  * to LVGL, and runs the render loop via requestAnimationFrame.
+ *
+ * Communicates with the Zap server via WebSocket for HA state updates.
+ * Receives sensor values and pushes them into WASM (update_sensor).
+ * Receives sail button clicks from WASM (js_sail_config_changed)
+ * and sends them to the server to relay to HA.
  */
 
 const DISPLAY_W = 1280;
@@ -17,8 +22,24 @@ let imageData = null;
 let running = false;
 let lastTime = 0;
 
-// WebSocket for HA state relay (connected after WASM init)
+// WebSocket for HA state relay
 let ws = null;
+
+// Sensor entity ID → WASM sensor_id mapping
+const SENSOR_MAP = {
+    "sensor.primrose_position_latitude_formatted": 0,
+    "sensor.primrose_position_longitude_formatted": 1,
+    "sensor.primrose_log_change_24h": 2,
+    "sensor.average_speed_24h": 3,
+};
+
+// Sail input_select entity → sail_id mapping
+const SAIL_ENTITIES = {
+    0: "input_select.sail_configuration_main",
+};
+
+// Sail option value → index mapping
+const SAIL_MAIN_OPTIONS = ["100%", "Reef 1", "Reef 2", "Reef 3"];
 
 /**
  * Determine the base path for this app.
@@ -27,7 +48,6 @@ let ws = null;
  */
 function getBasePath() {
     const path = window.location.pathname;
-    // HA ingress URLs look like /api/hassio_ingress/<token>/
     const ingressMatch = path.match(/^(\/api\/hassio_ingress\/[^/]+\/)/);
     if (ingressMatch) {
         return ingressMatch[1];
@@ -46,11 +66,9 @@ function resizeCanvas() {
 
     let cssW, cssH;
     if (viewAspect > ASPECT) {
-        // Viewport is wider than 16:9 — fit to height
         cssH = vh;
         cssW = vh * ASPECT;
     } else {
-        // Viewport is taller — fit to width
         cssW = vw;
         cssH = vw / ASPECT;
     }
@@ -84,11 +102,9 @@ function eventToLVGL(e) {
 
 /**
  * WASM import: called by LVGL flush callback to signal a region update.
- * We blit the entire framebuffer to canvas on each frame anyway,
- * but this could be used for partial updates in the future.
  */
 function js_flush(x, y, w, h) {
-    // Flush is handled in the rAF loop by reading the full framebuffer
+    // Handled in rAF loop by reading the full framebuffer
 }
 
 /**
@@ -96,6 +112,82 @@ function js_flush(x, y, w, h) {
  */
 function js_get_time() {
     return performance.now();
+}
+
+/**
+ * WASM import: called when a sail config button is pressed in the UI.
+ * Sends the new selection to the server which relays to HA.
+ * sail_id: 0 = main sail
+ * option_index: index into the options array
+ */
+function js_sail_config_changed(sail_id, option_index) {
+    const entity_id = SAIL_ENTITIES[sail_id];
+    if (!entity_id) return;
+
+    let option_value;
+    if (sail_id === 0) {
+        option_value = SAIL_MAIN_OPTIONS[option_index];
+    }
+
+    if (!option_value) return;
+
+    console.log(`[Sail] ${entity_id} → ${option_value}`);
+
+    // Send to server via WebSocket
+    if (ws && ws.readyState === WebSocket.OPEN) {
+        ws.send(JSON.stringify({
+            type: "call_service",
+            domain: "input_select",
+            service: "select_option",
+            service_data: {
+                entity_id: entity_id,
+                option: option_value,
+            },
+        }));
+    }
+}
+
+/**
+ * Write a string into WASM memory and call update_sensor.
+ */
+function pushSensorValue(sensorId, value) {
+    if (!wasm) return;
+    const encoder = new TextEncoder();
+    const encoded = encoder.encode(value + "\0"); // null-terminated
+    const len = encoded.length;
+
+    // Allocate in WASM memory — use a fixed scratch area at the end of
+    // the framebuffer region. The framebuffer is at a known location,
+    // so we use a region after it. For simplicity, write to a scratch
+    // buffer starting at a high offset in WASM linear memory.
+    // WASM memory is 64MB initial, we use a 4KB scratch at offset 60MB.
+    const SCRATCH_OFFSET = 60 * 1024 * 1024;
+    const mem = new Uint8Array(wasmMemory.buffer);
+
+    if (SCRATCH_OFFSET + len > mem.length) return;
+    mem.set(encoded, SCRATCH_OFFSET);
+
+    wasm.instance.exports.update_sensor(sensorId, SCRATCH_OFFSET, len - 1);
+}
+
+/**
+ * Process a state update message from the server.
+ */
+function handleStateUpdate(entityId, state) {
+    // Check sensor map
+    const sensorId = SENSOR_MAP[entityId];
+    if (sensorId !== undefined) {
+        pushSensorValue(sensorId, state);
+        return;
+    }
+
+    // Check sail entities
+    if (entityId === "input_select.sail_configuration_main") {
+        const idx = SAIL_MAIN_OPTIONS.indexOf(state);
+        if (idx >= 0 && wasm) {
+            wasm.instance.exports.update_sail_main(idx);
+        }
+    }
 }
 
 /**
@@ -169,7 +261,6 @@ function setupInput() {
 
     canvas.addEventListener("touchend", (e) => {
         isPressed = false;
-        // Use last known position for release
         wasm.instance.exports.set_input(0, 0, 0);
         e.preventDefault();
     }, { passive: false });
@@ -192,7 +283,18 @@ function connectWebSocket() {
         ws = new WebSocket(wsUrl);
         ws.onopen = () => {
             console.log("[WS] Connected to server");
-            // Request initial states
+            // Subscribe to the entities we care about
+            ws.send(JSON.stringify({
+                type: "subscribe",
+                entities: [
+                    "sensor.primrose_position_latitude_formatted",
+                    "sensor.primrose_position_longitude_formatted",
+                    "sensor.primrose_log_change_24h",
+                    "sensor.average_speed_24h",
+                    "input_select.sail_configuration_main",
+                ],
+            }));
+            // Request current states
             ws.send(JSON.stringify({ type: "get_states" }));
         };
         ws.onmessage = (event) => {
@@ -217,8 +319,21 @@ function connectWebSocket() {
 }
 
 function handleWSMessage(msg) {
-    // Future: update LVGL dashboard widgets based on HA state changes
-    console.log("[WS] Received:", msg.type);
+    if (msg.type === "state_changed" || msg.type === "state") {
+        // Single entity update
+        if (msg.entity_id && msg.state !== undefined) {
+            handleStateUpdate(msg.entity_id, String(msg.state));
+        }
+    } else if (msg.type === "states") {
+        // Bulk state response
+        if (Array.isArray(msg.data)) {
+            for (const entity of msg.data) {
+                if (entity.entity_id && entity.state !== undefined) {
+                    handleStateUpdate(entity.entity_id, String(entity.state));
+                }
+            }
+        }
+    }
 }
 
 /**
@@ -245,6 +360,7 @@ async function main() {
             env: {
                 js_flush: js_flush,
                 js_get_time: js_get_time,
+                js_sail_config_changed: js_sail_config_changed,
             },
         };
 

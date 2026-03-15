@@ -1,114 +1,571 @@
-///! Placeholder dashboard UI.
-///! Creates a simple Home Assistant-style dashboard with:
-///! - Header with title
-///! - Grid of cards showing entity states
-///! This will be replaced with a pluggable module system later.
+///! Multi-page LVGL dashboard with right-side icon navigation.
+///!
+///! Layout (1280x720):
+///!   [   Page Content (90%)   ][ Nav Bar (10%) ]
+///!
+///! Pages:
+///!   0 — Logbook:      Position + 24h log sensor cards
+///!   1 — Anchor Alarm: (placeholder)
+///!   2 — Sails:        Main sail configuration buttons
+///!
+///! Color palette (dark nautical theme):
+///!   BG_DARK    #220901  — screen / deepest background
+///!   BG_MID     #621708  — card backgrounds
+///!   ACCENT_1   #941B0C  — borders, inactive elements
+///!   ACCENT_2   #BC3908  — active nav icon, highlights
+///!   FOREGROUND #F6AA1C  — text, values, active buttons
 
 const lv = @import("lv.zig");
 
-/// Screen dimensions (set during init)
+// ============================================================
+// Color palette
+// ============================================================
+const COL_BG_DARK = 0x220901;
+const COL_BG_MID = 0x621708;
+const COL_ACCENT_1 = 0x941B0C;
+const COL_ACCENT_2 = 0xBC3908;
+const COL_FG = 0xF6AA1C;
+const COL_TEXT = 0xF6AA1C;
+const COL_TEXT_DIM = 0x944A10; // dimmed text (derived: midpoint FG/BG)
+const COL_NAV_BG = 0x180600; // slightly darker than BG_DARK for nav bar
+const COL_CARD_BG = 0x3A0E04; // card background (between BG_DARK and BG_MID)
+const COL_CARD_BORDER = 0x621708;
+
+// ============================================================
+// Layout constants (1280x720)
+// ============================================================
+const NAV_WIDTH_PCT = 10; // right-side nav bar = 10% of screen width
+const PAGE_TITLE_H = 48; // page title row height
+
+// ============================================================
+// Page indices
+// ============================================================
+const PAGE_LOGBOOK: usize = 0;
+const PAGE_ANCHOR: usize = 1;
+const PAGE_SAILS: usize = 2;
+const PAGE_COUNT: usize = 3;
+
+// ============================================================
+// Module state
+// ============================================================
 var screen_w: u32 = 1280;
 var screen_h: u32 = 720;
+var nav_w: u32 = 128;
+var page_w: u32 = 1152;
+
+var current_page: usize = PAGE_LOGBOOK;
+
+// Page container objects (one per page, shown/hidden)
+var page_containers: [PAGE_COUNT]?*lv.lv_obj_t = .{ null, null, null };
+
+// Nav icon button objects (for highlight tracking)
+var nav_buttons: [PAGE_COUNT]?*lv.lv_obj_t = .{ null, null, null };
+
+// --- Logbook page sensor labels (updated via WASM export) ---
+var lbl_latitude: ?*lv.lv_obj_t = null;
+var lbl_longitude: ?*lv.lv_obj_t = null;
+var lbl_distance_24h: ?*lv.lv_obj_t = null;
+var lbl_speed_24h: ?*lv.lv_obj_t = null;
+
+// --- Sails page button references ---
+const SAIL_MAIN_OPTIONS = 4;
+var sail_main_btns: [SAIL_MAIN_OPTIONS]?*lv.lv_obj_t = .{ null, null, null, null };
+var sail_main_current: usize = 0; // index of currently active option
+
+// JS callback for sail config changes
+extern fn js_sail_config_changed(sail_id: i32, option_index: i32) void;
+
+// ============================================================
+// Public API
+// ============================================================
 
 pub fn init(w: u32, h: u32) void {
     screen_w = w;
     screen_h = h;
+    nav_w = w * NAV_WIDTH_PCT / 100;
+    page_w = w - nav_w;
 }
 
 pub fn create() void {
     const screen = lv.lv_screen_active();
     if (screen == null) return;
 
-    // Dark background for the screen
-    lv.lv_obj_set_style_bg_color(screen, lv.lv_color_hex(0x1a1a2e), lv.LV_PART_MAIN);
+    // Screen background
+    lv.lv_obj_set_style_bg_color(screen, lv.lv_color_hex(COL_BG_DARK), lv.LV_PART_MAIN);
     lv.lv_obj_set_style_bg_opa(screen, lv.LV_OPA_COVER, lv.LV_PART_MAIN);
     lv.lv_obj_remove_flag(screen, lv.LV_OBJ_FLAG_SCROLLABLE);
 
-    // --- Header bar ---
-    const header = lv.lv_obj_create(screen);
-    if (header == null) return;
+    // Create the page content area (left 90%)
+    createPages(screen);
 
-    lv.lv_obj_set_size(header, @intCast(screen_w), 56);
-    lv.lv_obj_align(header, lv.LV_ALIGN_TOP_LEFT, 0, 0);
-    lv.lv_obj_set_style_bg_color(header, lv.lv_color_hex(0x16213e), lv.LV_PART_MAIN);
-    lv.lv_obj_set_style_bg_opa(header, lv.LV_OPA_COVER, lv.LV_PART_MAIN);
-    lv.lv_obj_set_style_radius(header, 0, lv.LV_PART_MAIN);
-    lv.lv_obj_remove_flag(header, lv.LV_OBJ_FLAG_SCROLLABLE);
+    // Create the navigation bar (right 10%)
+    createNavBar(screen);
 
-    const title = lv.lv_label_create(header);
-    if (title) |t| {
-        lv.lv_label_set_text(t, "LVGL Dashboard");
-        lv.lv_obj_set_style_text_color(t, lv.lv_color_hex(0xe0e0e0), lv.LV_PART_MAIN);
-        lv.lv_obj_set_style_text_font(t, lv.lv_font_montserrat_20, lv.LV_PART_MAIN);
-        lv.lv_obj_align(t, lv.LV_ALIGN_LEFT_MID, 20, 0);
-    }
-
-    const subtitle = lv.lv_label_create(header);
-    if (subtitle) |s| {
-        lv.lv_label_set_text(s, "Home Assistant");
-        lv.lv_obj_set_style_text_color(s, lv.lv_color_hex(0x888888), lv.LV_PART_MAIN);
-        lv.lv_obj_set_style_text_font(s, lv.lv_font_montserrat_14, lv.LV_PART_MAIN);
-        lv.lv_obj_align(s, lv.LV_ALIGN_RIGHT_MID, -20, 0);
-    }
-
-    // --- Card grid container ---
-    const grid = lv.lv_obj_create(screen);
-    if (grid == null) return;
-
-    lv.lv_obj_set_size(grid, @intCast(screen_w - 40), @intCast(screen_h - 76));
-    lv.lv_obj_align(grid, lv.LV_ALIGN_TOP_LEFT, 20, 66);
-    lv.lv_obj_set_style_bg_opa(grid, lv.LV_OPA_TRANSP, lv.LV_PART_MAIN);
-    lv.lv_obj_set_style_radius(grid, 0, lv.LV_PART_MAIN);
-    lv.lv_obj_set_flex_flow(grid, lv.LV_FLEX_FLOW_ROW_WRAP);
-    lv.lv_obj_set_flex_align(grid, lv.LV_FLEX_ALIGN_START, lv.LV_FLEX_ALIGN_START, lv.LV_FLEX_ALIGN_START);
-    lv.lv_obj_set_style_pad_all(grid, 10, lv.LV_PART_MAIN);
-
-    // --- Sample cards ---
-    createCard(grid, "Living Room", "Light", "ON", 0x4ecca3);
-    createCard(grid, "Bedroom", "Light", "OFF", 0xe74c3c);
-    createCard(grid, "Thermostat", "Climate", "21.5\xc2\xb0" ++ "C", 0xf39c12);
-    createCard(grid, "Front Door", "Lock", "Locked", 0x3498db);
-    createCard(grid, "Kitchen", "Light", "ON", 0x4ecca3);
-    createCard(grid, "Motion", "Sensor", "Clear", 0x95a5a6);
-    createCard(grid, "Garage", "Cover", "Closed", 0x9b59b6);
-    createCard(grid, "Energy", "Sensor", "1.2 kW", 0xe67e22);
+    // Show the first page
+    showPage(PAGE_LOGBOOK);
 }
 
-fn createCard(parent: ?*lv.lv_obj_t, name: [*:0]const u8, entity_type: [*:0]const u8, state: [*:0]const u8, color: u32) void {
+// ============================================================
+// Navigation bar (right side, 10% width)
+// ============================================================
+
+fn createNavBar(parent: ?*lv.lv_obj_t) void {
     if (parent == null) return;
 
-    const card = lv.lv_obj_create(parent);
-    if (card == null) return;
+    const bar = lv.lv_obj_create(parent);
+    if (bar == null) return;
 
-    lv.lv_obj_set_size(card, 280, 140);
-    lv.lv_obj_set_style_bg_color(card, lv.lv_color_hex(0x202040), lv.LV_PART_MAIN);
+    lv.lv_obj_set_size(bar, @intCast(nav_w), @intCast(screen_h));
+    lv.lv_obj_align(bar, lv.LV_ALIGN_TOP_RIGHT, 0, 0);
+    lv.lv_obj_set_style_bg_color(bar, lv.lv_color_hex(COL_NAV_BG), lv.LV_PART_MAIN);
+    lv.lv_obj_set_style_bg_opa(bar, lv.LV_OPA_COVER, lv.LV_PART_MAIN);
+    lv.lv_obj_set_style_radius(bar, 0, lv.LV_PART_MAIN);
+    lv.lv_obj_set_style_border_width(bar, 1, lv.LV_PART_MAIN);
+    lv.lv_obj_set_style_border_color(bar, lv.lv_color_hex(COL_ACCENT_1), lv.LV_PART_MAIN);
+    lv.lv_obj_set_style_pad_all(bar, 0, lv.LV_PART_MAIN);
+    lv.lv_obj_remove_flag(bar, lv.LV_OBJ_FLAG_SCROLLABLE);
+
+    // Layout: column, evenly spaced
+    lv.lv_obj_set_flex_flow(bar, lv.LV_FLEX_FLOW_COLUMN);
+    lv.lv_obj_set_flex_align(bar, lv.LV_FLEX_ALIGN_SPACE_EVENLY, lv.LV_FLEX_ALIGN_CENTER, lv.LV_FLEX_ALIGN_CENTER);
+
+    // Nav buttons with icons
+    // LV_SYMBOL_GPS = location arrow (Logbook / position)
+    // LV_SYMBOL_WARNING = alert triangle (Anchor Alarm)
+    // LV_SYMBOL_EJECT = upward triangle (Sails)
+    const icons = [PAGE_COUNT][*:0]const u8{
+        lv.LV_SYMBOL_GPS,
+        lv.LV_SYMBOL_WARNING,
+        lv.LV_SYMBOL_EJECT,
+    };
+    const page_indices = [PAGE_COUNT]usize{ PAGE_LOGBOOK, PAGE_ANCHOR, PAGE_SAILS };
+
+    for (0..PAGE_COUNT) |i| {
+        nav_buttons[i] = createNavButton(bar, icons[i], page_indices[i]);
+    }
+}
+
+fn createNavButton(parent: ?*lv.lv_obj_t, icon: [*:0]const u8, page_index: usize) ?*lv.lv_obj_t {
+    if (parent == null) return null;
+
+    const btn = lv.lv_button_create(parent);
+    if (btn == null) return null;
+
+    const btn_size: i32 = @intCast(nav_w - 16);
+    lv.lv_obj_set_size(btn, btn_size, btn_size);
+    lv.lv_obj_set_style_bg_color(btn, lv.lv_color_hex(COL_NAV_BG), lv.LV_PART_MAIN);
+    lv.lv_obj_set_style_bg_opa(btn, lv.LV_OPA_COVER, lv.LV_PART_MAIN);
+    lv.lv_obj_set_style_radius(btn, 12, lv.LV_PART_MAIN);
+    lv.lv_obj_set_style_border_width(btn, 0, lv.LV_PART_MAIN);
+    lv.lv_obj_set_style_shadow_width(btn, 0, lv.LV_PART_MAIN);
+
+    // Icon label
+    const label = lv.lv_label_create(btn);
+    if (label) |lbl| {
+        lv.lv_label_set_text(lbl, icon);
+        lv.lv_obj_set_style_text_font(lbl, lv.lv_font_montserrat_28, lv.LV_PART_MAIN);
+        lv.lv_obj_set_style_text_color(lbl, lv.lv_color_hex(COL_TEXT_DIM), lv.LV_PART_MAIN);
+        lv.lv_obj_center(lbl);
+    }
+
+    // Store page index as user_data for the click handler
+    // We encode the page index as a pointer-sized integer
+    const user_data: ?*anyopaque = @ptrFromInt(page_index);
+    _ = lv.lv_obj_add_event_cb(btn, navClickCb, lv.LV_EVENT_CLICKED, user_data);
+
+    return btn;
+}
+
+fn navClickCb(e: ?*lv.lv_event_t) callconv(.C) void {
+    if (e == null) return;
+    const user_data = lv.lv_event_get_user_data(e);
+    const page_index: usize = @intFromPtr(user_data);
+    if (page_index < PAGE_COUNT) {
+        showPage(page_index);
+    }
+}
+
+fn showPage(index: usize) void {
+    if (index >= PAGE_COUNT) return;
+    current_page = index;
+
+    // Show/hide page containers
+    for (0..PAGE_COUNT) |i| {
+        if (page_containers[i]) |container| {
+            if (i == index) {
+                lv.lv_obj_remove_flag(container, lv.LV_OBJ_FLAG_HIDDEN);
+            } else {
+                lv.lv_obj_add_flag(container, lv.LV_OBJ_FLAG_HIDDEN);
+            }
+        }
+    }
+
+    // Update nav button highlight
+    for (0..PAGE_COUNT) |i| {
+        if (nav_buttons[i]) |btn| {
+            // Get the label child (first child of button)
+            const child = lv.c.lv_obj_get_child(btn, 0);
+            if (child) |lbl| {
+                if (i == index) {
+                    // Active: bright foreground color + accent background
+                    lv.lv_obj_set_style_text_color(lbl, lv.lv_color_hex(COL_FG), lv.LV_PART_MAIN);
+                    lv.lv_obj_set_style_bg_color(btn, lv.lv_color_hex(COL_ACCENT_1), lv.LV_PART_MAIN);
+                } else {
+                    // Inactive: dim
+                    lv.lv_obj_set_style_text_color(lbl, lv.lv_color_hex(COL_TEXT_DIM), lv.LV_PART_MAIN);
+                    lv.lv_obj_set_style_bg_color(btn, lv.lv_color_hex(COL_NAV_BG), lv.LV_PART_MAIN);
+                }
+            }
+        }
+    }
+}
+
+// ============================================================
+// Page containers
+// ============================================================
+
+fn createPages(parent: ?*lv.lv_obj_t) void {
+    if (parent == null) return;
+
+    for (0..PAGE_COUNT) |i| {
+        const container = lv.lv_obj_create(parent);
+        if (container == null) continue;
+
+        lv.lv_obj_set_size(container, @intCast(page_w), @intCast(screen_h));
+        lv.lv_obj_align(container, lv.LV_ALIGN_TOP_LEFT, 0, 0);
+        lv.lv_obj_set_style_bg_opa(container, lv.LV_OPA_TRANSP, lv.LV_PART_MAIN);
+        lv.lv_obj_set_style_border_width(container, 0, lv.LV_PART_MAIN);
+        lv.lv_obj_set_style_radius(container, 0, lv.LV_PART_MAIN);
+        lv.lv_obj_set_style_pad_all(container, 20, lv.LV_PART_MAIN);
+        lv.lv_obj_remove_flag(container, lv.LV_OBJ_FLAG_SCROLLABLE);
+
+        // Start hidden (showPage will reveal the active one)
+        lv.lv_obj_add_flag(container, lv.LV_OBJ_FLAG_HIDDEN);
+
+        page_containers[i] = container;
+
+        // Populate page content
+        switch (i) {
+            PAGE_LOGBOOK => createLogbookPage(container),
+            PAGE_ANCHOR => createAnchorPage(container),
+            PAGE_SAILS => createSailsPage(container),
+            else => {},
+        }
+    }
+}
+
+// ============================================================
+// Page title helper
+// ============================================================
+
+fn createPageTitle(parent: ?*lv.lv_obj_t, text: [*:0]const u8) void {
+    if (parent == null) return;
+    const lbl = lv.lv_label_create(parent);
+    if (lbl) |l| {
+        lv.lv_label_set_text(l, text);
+        lv.lv_obj_set_style_text_color(l, lv.lv_color_hex(COL_FG), lv.LV_PART_MAIN);
+        lv.lv_obj_set_style_text_font(l, lv.lv_font_montserrat_28, lv.LV_PART_MAIN);
+        lv.lv_obj_align(l, lv.LV_ALIGN_TOP_LEFT, 0, 0);
+    }
+}
+
+// ============================================================
+// Sensor card helper
+// ============================================================
+
+/// Creates a sensor card with a small label (title) and a large value label.
+/// Returns the value label pointer so it can be updated later.
+fn createSensorCard(
+    parent: ?*lv.lv_obj_t,
+    card_w: i32,
+    card_h: i32,
+    title: [*:0]const u8,
+    initial_value: [*:0]const u8,
+) ?*lv.lv_obj_t {
+    if (parent == null) return null;
+
+    const card = lv.lv_obj_create(parent);
+    if (card == null) return null;
+
+    lv.lv_obj_set_size(card, card_w, card_h);
+    lv.lv_obj_set_style_bg_color(card, lv.lv_color_hex(COL_CARD_BG), lv.LV_PART_MAIN);
     lv.lv_obj_set_style_bg_opa(card, lv.LV_OPA_COVER, lv.LV_PART_MAIN);
     lv.lv_obj_set_style_radius(card, 12, lv.LV_PART_MAIN);
-    lv.lv_obj_set_flex_flow(card, lv.LV_FLEX_FLOW_COLUMN);
+    lv.lv_obj_set_style_border_width(card, 1, lv.LV_PART_MAIN);
+    lv.lv_obj_set_style_border_color(card, lv.lv_color_hex(COL_CARD_BORDER), lv.LV_PART_MAIN);
     lv.lv_obj_set_style_pad_all(card, 16, lv.LV_PART_MAIN);
     lv.lv_obj_remove_flag(card, lv.LV_OBJ_FLAG_SCROLLABLE);
 
-    // Entity type label (small, grey)
-    const type_label = lv.lv_label_create(card);
-    if (type_label) |tl| {
-        lv.lv_label_set_text(tl, entity_type);
-        lv.lv_obj_set_style_text_color(tl, lv.lv_color_hex(0x888888), lv.LV_PART_MAIN);
+    // Column layout
+    lv.lv_obj_set_flex_flow(card, lv.LV_FLEX_FLOW_COLUMN);
+    lv.lv_obj_set_style_pad_row(card, 4, lv.LV_PART_MAIN);
+
+    // Title label (small, dimmed)
+    const title_lbl = lv.lv_label_create(card);
+    if (title_lbl) |tl| {
+        lv.lv_label_set_text(tl, title);
+        lv.lv_obj_set_style_text_color(tl, lv.lv_color_hex(COL_TEXT_DIM), lv.LV_PART_MAIN);
         lv.lv_obj_set_style_text_font(tl, lv.lv_font_montserrat_14, lv.LV_PART_MAIN);
     }
 
-    // Entity name (medium, white)
-    const name_label = lv.lv_label_create(card);
-    if (name_label) |nl| {
-        lv.lv_label_set_text(nl, name);
-        lv.lv_obj_set_style_text_color(nl, lv.lv_color_hex(0xe0e0e0), lv.LV_PART_MAIN);
-        lv.lv_obj_set_style_text_font(nl, lv.lv_font_montserrat_20, lv.LV_PART_MAIN);
+    // Value label (large, bright)
+    const value_lbl = lv.lv_label_create(card);
+    if (value_lbl) |vl| {
+        lv.lv_label_set_text(vl, initial_value);
+        lv.lv_obj_set_style_text_color(vl, lv.lv_color_hex(COL_FG), lv.LV_PART_MAIN);
+        lv.lv_obj_set_style_text_font(vl, lv.lv_font_montserrat_24, lv.LV_PART_MAIN);
+        return vl;
     }
 
-    // State value (colored)
-    const state_label = lv.lv_label_create(card);
-    if (state_label) |sl| {
-        lv.lv_label_set_text(sl, state);
-        lv.lv_obj_set_style_text_color(sl, lv.lv_color_hex(color), lv.LV_PART_MAIN);
-        lv.lv_obj_set_style_text_font(sl, lv.lv_font_montserrat_20, lv.LV_PART_MAIN);
+    return null;
+}
+
+// ============================================================
+// Page 0: Logbook
+// ============================================================
+
+fn createLogbookPage(parent: ?*lv.lv_obj_t) void {
+    if (parent == null) return;
+
+    createPageTitle(parent, "Logbook");
+
+    // Content area below title
+    const content = lv.lv_obj_create(parent);
+    if (content == null) return;
+
+    const content_w = page_w - 40; // account for page padding
+    lv.lv_obj_set_size(content, @intCast(content_w), @intCast(screen_h - 90));
+    lv.lv_obj_align(content, lv.LV_ALIGN_TOP_LEFT, 0, PAGE_TITLE_H);
+    lv.lv_obj_set_style_bg_opa(content, lv.LV_OPA_TRANSP, lv.LV_PART_MAIN);
+    lv.lv_obj_set_style_border_width(content, 0, lv.LV_PART_MAIN);
+    lv.lv_obj_set_style_pad_all(content, 0, lv.LV_PART_MAIN);
+    lv.lv_obj_remove_flag(content, lv.LV_OBJ_FLAG_SCROLLABLE);
+
+    // --- Row 1: Position section ---
+    const section_label_1 = lv.lv_label_create(content);
+    if (section_label_1) |sl| {
+        lv.lv_label_set_text(sl, "Position");
+        lv.lv_obj_set_style_text_color(sl, lv.lv_color_hex(COL_ACCENT_2), lv.LV_PART_MAIN);
+        lv.lv_obj_set_style_text_font(sl, lv.lv_font_montserrat_16, lv.LV_PART_MAIN);
+        lv.lv_obj_align(sl, lv.LV_ALIGN_TOP_LEFT, 0, 0);
     }
+
+    const row1 = createCardRow(content, 30);
+    const card_w: i32 = @intCast((content_w - 30) / 2); // two cards per row with gap
+    const card_h: i32 = 110;
+
+    lbl_latitude = createSensorCard(row1, card_w, card_h, "Latitude", "--");
+    lbl_longitude = createSensorCard(row1, card_w, card_h, "Longitude", "--");
+
+    // --- Row 2: Last 24h section ---
+    const section_label_2 = lv.lv_label_create(content);
+    if (section_label_2) |sl| {
+        lv.lv_label_set_text(sl, "Last 24h");
+        lv.lv_obj_set_style_text_color(sl, lv.lv_color_hex(COL_ACCENT_2), lv.LV_PART_MAIN);
+        lv.lv_obj_set_style_text_font(sl, lv.lv_font_montserrat_16, lv.LV_PART_MAIN);
+        lv.lv_obj_align(sl, lv.LV_ALIGN_TOP_LEFT, 0, 160);
+    }
+
+    const row2 = createCardRow(content, 190);
+
+    lbl_distance_24h = createSensorCard(row2, card_w, card_h, "Distance", "--");
+    lbl_speed_24h = createSensorCard(row2, card_w, card_h, "Avg Speed", "--");
+}
+
+fn createCardRow(parent: ?*lv.lv_obj_t, y_offset: i32) ?*lv.lv_obj_t {
+    if (parent == null) return null;
+
+    const row = lv.lv_obj_create(parent);
+    if (row == null) return null;
+
+    const content_w = page_w - 40;
+    lv.lv_obj_set_size(row, @intCast(content_w), 120);
+    lv.lv_obj_align(row, lv.LV_ALIGN_TOP_LEFT, 0, y_offset);
+    lv.lv_obj_set_style_bg_opa(row, lv.LV_OPA_TRANSP, lv.LV_PART_MAIN);
+    lv.lv_obj_set_style_border_width(row, 0, lv.LV_PART_MAIN);
+    lv.lv_obj_set_style_pad_all(row, 0, lv.LV_PART_MAIN);
+    lv.lv_obj_set_style_pad_column(row, 15, lv.LV_PART_MAIN);
+    lv.lv_obj_set_flex_flow(row, lv.LV_FLEX_FLOW_ROW);
+    lv.lv_obj_set_flex_align(row, lv.LV_FLEX_ALIGN_START, lv.LV_FLEX_ALIGN_START, lv.LV_FLEX_ALIGN_START);
+    lv.lv_obj_remove_flag(row, lv.LV_OBJ_FLAG_SCROLLABLE);
+
+    return row;
+}
+
+// ============================================================
+// Page 1: Anchor Alarm
+// ============================================================
+
+fn createAnchorPage(parent: ?*lv.lv_obj_t) void {
+    if (parent == null) return;
+
+    createPageTitle(parent, "Anchor Alarm");
+
+    // Placeholder content
+    const placeholder = lv.lv_label_create(parent);
+    if (placeholder) |p| {
+        lv.lv_label_set_text(p, "Anchor watch configuration\ncoming soon...");
+        lv.lv_obj_set_style_text_color(p, lv.lv_color_hex(COL_TEXT_DIM), lv.LV_PART_MAIN);
+        lv.lv_obj_set_style_text_font(p, lv.lv_font_montserrat_20, lv.LV_PART_MAIN);
+        lv.lv_obj_align(p, lv.LV_ALIGN_CENTER, 0, 0);
+    }
+}
+
+// ============================================================
+// Page 2: Sails
+// ============================================================
+
+fn createSailsPage(parent: ?*lv.lv_obj_t) void {
+    if (parent == null) return;
+
+    createPageTitle(parent, "Sail Configuration");
+
+    // Content area below title
+    const content = lv.lv_obj_create(parent);
+    if (content == null) return;
+
+    const content_w = page_w - 40;
+    lv.lv_obj_set_size(content, @intCast(content_w), @intCast(screen_h - 90));
+    lv.lv_obj_align(content, lv.LV_ALIGN_TOP_LEFT, 0, PAGE_TITLE_H);
+    lv.lv_obj_set_style_bg_opa(content, lv.LV_OPA_TRANSP, lv.LV_PART_MAIN);
+    lv.lv_obj_set_style_border_width(content, 0, lv.LV_PART_MAIN);
+    lv.lv_obj_set_style_pad_all(content, 0, lv.LV_PART_MAIN);
+    lv.lv_obj_remove_flag(content, lv.LV_OBJ_FLAG_SCROLLABLE);
+
+    // --- Main Sail row ---
+    const sail_label = lv.lv_label_create(content);
+    if (sail_label) |sl| {
+        lv.lv_label_set_text(sl, "Main Sail");
+        lv.lv_obj_set_style_text_color(sl, lv.lv_color_hex(COL_ACCENT_2), lv.LV_PART_MAIN);
+        lv.lv_obj_set_style_text_font(sl, lv.lv_font_montserrat_16, lv.LV_PART_MAIN);
+        lv.lv_obj_align(sl, lv.LV_ALIGN_TOP_LEFT, 0, 0);
+    }
+
+    const btn_row = lv.lv_obj_create(content);
+    if (btn_row == null) return;
+
+    lv.lv_obj_set_size(btn_row, @intCast(content_w), 80);
+    lv.lv_obj_align(btn_row, lv.LV_ALIGN_TOP_LEFT, 0, 30);
+    lv.lv_obj_set_style_bg_opa(btn_row, lv.LV_OPA_TRANSP, lv.LV_PART_MAIN);
+    lv.lv_obj_set_style_border_width(btn_row, 0, lv.LV_PART_MAIN);
+    lv.lv_obj_set_style_pad_all(btn_row, 0, lv.LV_PART_MAIN);
+    lv.lv_obj_set_style_pad_column(btn_row, 12, lv.LV_PART_MAIN);
+    lv.lv_obj_set_flex_flow(btn_row, lv.LV_FLEX_FLOW_ROW);
+    lv.lv_obj_set_flex_align(btn_row, lv.LV_FLEX_ALIGN_START, lv.LV_FLEX_ALIGN_CENTER, lv.LV_FLEX_ALIGN_CENTER);
+    lv.lv_obj_remove_flag(btn_row, lv.LV_OBJ_FLAG_SCROLLABLE);
+
+    const labels = [SAIL_MAIN_OPTIONS][*:0]const u8{
+        "100%",
+        "Reef 1",
+        "Reef 2",
+        "Reef 3",
+    };
+
+    for (0..SAIL_MAIN_OPTIONS) |i| {
+        sail_main_btns[i] = createSailButton(btn_row, labels[i], i);
+    }
+
+    // Highlight the default (first option)
+    updateSailMainHighlight(0);
+}
+
+fn createSailButton(parent: ?*lv.lv_obj_t, text: [*:0]const u8, option_index: usize) ?*lv.lv_obj_t {
+    if (parent == null) return null;
+
+    const btn = lv.lv_button_create(parent);
+    if (btn == null) return null;
+
+    lv.lv_obj_set_size(btn, 180, 60);
+    lv.lv_obj_set_style_radius(btn, 10, lv.LV_PART_MAIN);
+    lv.lv_obj_set_style_border_width(btn, 2, lv.LV_PART_MAIN);
+    lv.lv_obj_set_style_border_color(btn, lv.lv_color_hex(COL_ACCENT_1), lv.LV_PART_MAIN);
+    lv.lv_obj_set_style_shadow_width(btn, 0, lv.LV_PART_MAIN);
+
+    // Default: inactive style
+    lv.lv_obj_set_style_bg_color(btn, lv.lv_color_hex(COL_CARD_BG), lv.LV_PART_MAIN);
+    lv.lv_obj_set_style_bg_opa(btn, lv.LV_OPA_COVER, lv.LV_PART_MAIN);
+
+    const lbl = lv.lv_label_create(btn);
+    if (lbl) |l| {
+        lv.lv_label_set_text(l, text);
+        lv.lv_obj_set_style_text_color(l, lv.lv_color_hex(COL_TEXT_DIM), lv.LV_PART_MAIN);
+        lv.lv_obj_set_style_text_font(l, lv.lv_font_montserrat_20, lv.LV_PART_MAIN);
+        lv.lv_obj_center(l);
+    }
+
+    const user_data: ?*anyopaque = @ptrFromInt(option_index);
+    _ = lv.lv_obj_add_event_cb(btn, sailMainClickCb, lv.LV_EVENT_CLICKED, user_data);
+
+    return btn;
+}
+
+fn sailMainClickCb(e: ?*lv.lv_event_t) callconv(.C) void {
+    if (e == null) return;
+    const user_data = lv.lv_event_get_user_data(e);
+    const option_index: usize = @intFromPtr(user_data);
+    if (option_index < SAIL_MAIN_OPTIONS) {
+        updateSailMainHighlight(option_index);
+        // Notify JS → HA about the selection
+        // sail_id 0 = main sail
+        js_sail_config_changed(0, @intCast(option_index));
+    }
+}
+
+fn updateSailMainHighlight(active_index: usize) void {
+    sail_main_current = active_index;
+
+    for (0..SAIL_MAIN_OPTIONS) |i| {
+        if (sail_main_btns[i]) |btn| {
+            const child = lv.c.lv_obj_get_child(btn, 0);
+            if (child) |lbl| {
+                if (i == active_index) {
+                    // Active: bright FG text + accent bg + bright border
+                    lv.lv_obj_set_style_bg_color(btn, lv.lv_color_hex(COL_ACCENT_2), lv.LV_PART_MAIN);
+                    lv.lv_obj_set_style_border_color(btn, lv.lv_color_hex(COL_FG), lv.LV_PART_MAIN);
+                    lv.lv_obj_set_style_text_color(lbl, lv.lv_color_hex(COL_BG_DARK), lv.LV_PART_MAIN);
+                } else {
+                    // Inactive: dark bg + dim border + dim text
+                    lv.lv_obj_set_style_bg_color(btn, lv.lv_color_hex(COL_CARD_BG), lv.LV_PART_MAIN);
+                    lv.lv_obj_set_style_border_color(btn, lv.lv_color_hex(COL_ACCENT_1), lv.LV_PART_MAIN);
+                    lv.lv_obj_set_style_text_color(lbl, lv.lv_color_hex(COL_TEXT_DIM), lv.LV_PART_MAIN);
+                }
+            }
+        }
+    }
+}
+
+// ============================================================
+// WASM-exported state update functions
+// (called from JS when HA state changes arrive via WebSocket)
+// ============================================================
+
+/// Update a sensor value label by sensor ID.
+/// sensor_id mapping:
+///   0 = latitude
+///   1 = longitude
+///   2 = distance_24h
+///   3 = speed_24h
+export fn update_sensor(sensor_id: i32, value_ptr: [*]const u8, value_len: i32) void {
+    const value: [*:0]const u8 = @ptrCast(value_ptr);
+    _ = value_len; // text is null-terminated via the Zig/LVGL label API
+
+    const label: ?*lv.lv_obj_t = switch (sensor_id) {
+        0 => lbl_latitude,
+        1 => lbl_longitude,
+        2 => lbl_distance_24h,
+        3 => lbl_speed_24h,
+        else => null,
+    };
+
+    if (label) |lbl| {
+        lv.lv_label_set_text(lbl, value);
+    }
+}
+
+/// Update the main sail selection from HA state.
+/// Called when HA reports the current input_select value.
+/// option_index: 0="100%", 1="Reef 1", 2="Reef 2", 3="Reef 3"
+export fn update_sail_main(option_index: i32) void {
+    const idx: usize = @intCast(@max(0, @min(option_index, SAIL_MAIN_OPTIONS - 1)));
+    updateSailMainHighlight(idx);
 }
