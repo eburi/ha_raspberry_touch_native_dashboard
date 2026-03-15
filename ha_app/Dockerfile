@@ -46,10 +46,14 @@ COPY --from=builder /build/zig-out/bin/lvgl-server /usr/local/bin/lvgl-server
 COPY --from=builder /build/web/ /usr/local/share/lvgl-dashboard/web/
 COPY --from=builder /build/zig-out/bin/dashboard.wasm /usr/local/share/lvgl-dashboard/web/dashboard.wasm
 
-# Copy rootfs (S6 services, etc.) — rootfs/ is at addon root after deploy
+# Copy S6 rootfs overlay (services, etc.)
 COPY rootfs/ /
 
-# Make service scripts executable
+# Copy run script as alternative entrypoint
+COPY run.sh /app/run.sh
+RUN chmod +x /app/run.sh
+
+# Make S6 service scripts executable
 RUN chmod +x /etc/services.d/lvgl_dashboard/run /etc/services.d/lvgl_dashboard/finish
 
 # Working directory

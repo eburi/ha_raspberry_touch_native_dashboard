@@ -28,7 +28,7 @@ echo "--- Building deployment archive..."
         ha_app/config.yaml \
         ha_app/build.yaml \
         ha_app/Dockerfile \
-        ha_app/apparmor.txt \
+        ha_app/run.sh \
         ha_app/rootfs \
         ha_app/translations \
         build.zig \

@@ -94,7 +94,10 @@ fn onRequest(r: zap.Request) anyerror!void {
 
     // Serve index.html for root path
     if (std.mem.eql(u8, path, "/")) {
-        r.sendFile("web/index.html") catch {
+        // Construct path: {web_root}/index.html
+        var buf: [512]u8 = undefined;
+        const index_path = std.fmt.bufPrint(&buf, "{s}/index.html", .{config.web_root}) catch "web/index.html";
+        r.sendFile(index_path) catch {
             r.setStatus(.not_found);
             r.sendBody("Not found") catch {};
         };
@@ -126,6 +129,11 @@ fn readConfig() Config {
     // HA URL override
     if (std.process.getEnvVarOwned(std.heap.page_allocator, "HA_URL")) |url| {
         cfg.ha_url = url;
+    } else |_| {}
+
+    // Web root override
+    if (std.process.getEnvVarOwned(std.heap.page_allocator, "WEB_ROOT")) |root| {
+        cfg.web_root = root;
     } else |_| {}
 
     return cfg;
