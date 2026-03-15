@@ -41,6 +41,12 @@ pub fn main() !void {
     // Initialize WebSocket handler
     websocket.init(allocator);
 
+    // Register custom MIME types (must happen before listen)
+    // .wasm → application/wasm (required for WebAssembly.instantiateStreaming)
+    const fio = zap.fio;
+    const wasm_mime = fio.fiobj_str_new("application/wasm", 16);
+    fio.http_mimetype_register(@constCast("wasm"), 4, wasm_mime);
+
     // Set up the Zap listener
     var listener = zap.HttpListener.init(.{
         .port = @as(usize, config.port),

@@ -34,7 +34,7 @@
 #define LV_STDARG_INCLUDE       <stdarg.h>
 
 /*Size of the memory available for lv_malloc() in bytes (>= 2kB)*/
-#define LV_MEM_SIZE (256 * 1024U)          /*256KB for WASM dashboard*/
+#define LV_MEM_SIZE (16 * 1024 * 1024U)    /*16MB for WASM (full-screen buffers + UI objects)*/
 
 /*Size of the memory expand for lv_malloc() in bytes*/
 #define LV_MEM_POOL_EXPAND_SIZE 0
@@ -119,7 +119,13 @@
 #define LV_USE_ASSERT_OBJ           0
 
 #define LV_ASSERT_HANDLER_INCLUDE <stdint.h>
+
+/*On WASM: trap instead of while(1) so assertions surface as errors, not hangs*/
+#ifdef __wasm__
+#define LV_ASSERT_HANDLER __builtin_trap();
+#else
 #define LV_ASSERT_HANDLER while(1);   /*Halt by default*/
+#endif
 
 /*====================
  * DEBUG
