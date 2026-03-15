@@ -21,6 +21,21 @@ let lastTime = 0;
 let ws = null;
 
 /**
+ * Determine the base path for this app.
+ * Under HA ingress: /api/hassio_ingress/<token>/
+ * Direct access:    /
+ */
+function getBasePath() {
+    const path = window.location.pathname;
+    // HA ingress URLs look like /api/hassio_ingress/<token>/
+    const ingressMatch = path.match(/^(\/api\/hassio_ingress\/[^/]+\/)/);
+    if (ingressMatch) {
+        return ingressMatch[1];
+    }
+    return "/";
+}
+
+/**
  * Scale canvas CSS size to fit viewport while preserving 16:9 aspect ratio.
  */
 function resizeCanvas() {
@@ -170,7 +185,8 @@ function setupInput() {
  */
 function connectWebSocket() {
     const proto = window.location.protocol === "https:" ? "wss:" : "ws:";
-    const wsUrl = `${proto}//${window.location.host}/ws`;
+    const basePath = getBasePath();
+    const wsUrl = `${proto}//${window.location.host}${basePath}ws`;
 
     try {
         ws = new WebSocket(wsUrl);
@@ -232,7 +248,8 @@ async function main() {
             },
         };
 
-        const response = await fetch("/dashboard.wasm");
+        const basePath = getBasePath();
+        const response = await fetch(basePath + "dashboard.wasm");
         if (!response.ok) throw new Error(`HTTP ${response.status}`);
 
         wasm = await WebAssembly.instantiateStreaming(response, importObject);
