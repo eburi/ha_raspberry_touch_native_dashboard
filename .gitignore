@@ -1,0 +1,9 @@
+# Zig build artifacts
+.zig-cache/
+zig-out/
+
+# Generated WASM (built from source)
+web/dashboard.wasm
+
+# OS
+.DS_Store

@@ -1,0 +1,21 @@
+#!/usr/bin/with-contenv bashio
+# S6 service run script for LVGL Dashboard
+
+# Read configuration from HA options
+PORT=$(bashio::config 'port' '8765')
+
+bashio::log.info "Starting LVGL Dashboard server on port ${PORT}"
+
+# Check for display hardware
+if [ -e /dev/fb0 ]; then
+    bashio::log.info "Framebuffer /dev/fb0 detected — native display available"
+else
+    bashio::log.warning "No framebuffer detected — web-only mode"
+fi
+
+# Export configuration
+export PORT="${PORT}"
+export WEB_ROOT="/usr/local/share/lvgl-dashboard/web"
+
+# Run the server
+exec /usr/local/bin/lvgl-server

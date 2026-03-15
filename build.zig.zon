@@ -1,0 +1,23 @@
+.{
+    .name = .ha_app_lvgl_dashboard,
+    .version = "0.1.0",
+    .fingerprint = 0x718c00a1ff7b5bac,
+    .minimum_zig_version = "0.14.1",
+    .dependencies = .{
+        .lvgl = .{
+            .url = "https://github.com/lvgl/lvgl/archive/refs/tags/v9.2.2.tar.gz",
+            .hash = "N-V-__8AAELMFAhkHyceMRAhVy5vZRYf63ZYtZ8amvKRoB8K",
+        },
+        .zap = .{
+            .url = "https://github.com/zigzap/zap/archive/refs/tags/v0.10.6.tar.gz",
+            .hash = "zap-0.10.6-GoeB89aDJAAUufiqV7sUCudCoSSCle0E2fbw388bO1Ug",
+        },
+    },
+    .paths = .{
+        "build.zig",
+        "build.zig.zon",
+        "src",
+        "web",
+        "lv_conf.h",
+    },
+}

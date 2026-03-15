@@ -1,0 +1,60 @@
+# Home Assistant App configuration
+# https://developers.home-assistant.io/docs/add-ons/configuration/
+name: "LVGL Dashboard"
+version: "0.1.0"
+slug: ha_app_lvgl_dashboard
+description: "Touch-screen dashboard built with LVGL graphics library"
+url: "https://github.com/your-repo/ha_app_lvgl_dashboard"
+
+# Build from local Dockerfile
+arch:
+  - aarch64
+  - amd64
+
+# Do not use default init — we use S6 overlay
+init: false
+
+# Resource access
+homeassistant_api: true
+hassio_api: true
+
+# Network
+ports:
+  "8765/tcp": 8765
+ports_description:
+  "8765/tcp": "LVGL Dashboard web interface"
+
+# Device access (for framebuffer + touch input)
+video: true
+full_access: false
+devicetree: false
+devices:
+  - /dev/fb0
+  - /dev/input
+
+# Options schema (configurable by user in HA UI)
+schema:
+  port:
+    type: integer
+    default: 8765
+    description: "Web server port"
+
+# App options defaults
+options:
+  port: 8765
+
+# Permissions
+auth_api: false
+ingress: true
+ingress_port: 8765
+ingress_entry: "/"
+panel_icon: "mdi:view-dashboard"
+panel_title: "LVGL Dashboard"
+
+# Startup behavior
+startup: application
+boot: auto
+
+# Map persistent storage
+map:
+  - config:rw

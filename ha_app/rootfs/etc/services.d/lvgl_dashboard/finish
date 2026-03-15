@@ -1,0 +1,10 @@
+#!/usr/bin/with-contenv bashio
+# S6 service finish script for LVGL Dashboard
+
+declare exit_code=${1}
+
+if [ "${exit_code}" -ne 0 ] && [ "${exit_code}" -ne 256 ]; then
+    bashio::log.error "LVGL Dashboard crashed with exit code ${exit_code}"
+    # Wait before restart to avoid rapid restart loops
+    sleep 5
+fi

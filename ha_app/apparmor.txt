@@ -1,0 +1,35 @@
+# AppArmor profile for LVGL Dashboard
+# Restricts the app to only the resources it needs
+
+#include <tunables/global>
+
+profile ha_app_lvgl_dashboard flags=(attach_disconnected,mediate_deleted) {
+  #include <abstractions/base>
+
+  # Network access (web server)
+  network inet stream,
+  network inet6 stream,
+  network inet dgram,
+  network inet6 dgram,
+
+  # Framebuffer access
+  /dev/fb0 rw,
+  /dev/fb1 rw,
+
+  # Input device access
+  /dev/input/** r,
+
+  # Binary and libraries
+  /usr/local/bin/lvgl-server ix,
+  /usr/local/share/lvgl-dashboard/** r,
+
+  # Data directory
+  /data/** rw,
+
+  # Proc filesystem (for hardware detection)
+  /proc/bus/input/devices r,
+  /sys/class/graphics/fb*/virtual_size r,
+
+  # Temporary files
+  /tmp/** rw,
+}

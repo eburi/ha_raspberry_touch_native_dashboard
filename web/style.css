@@ -1,0 +1,43 @@
+* {
+    margin: 0;
+    padding: 0;
+    box-sizing: border-box;
+}
+
+html, body {
+    width: 100%;
+    height: 100%;
+    background: #0a0a1a;
+    overflow: hidden;
+    font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
+}
+
+#container {
+    width: 100%;
+    height: 100%;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    position: relative;
+}
+
+#display {
+    /* Actual size set by JS; CSS scales to fit viewport preserving 16:9 */
+    image-rendering: auto;
+    cursor: pointer;
+    touch-action: none;
+}
+
+#status {
+    position: absolute;
+    bottom: 12px;
+    right: 16px;
+    color: #555;
+    font-size: 12px;
+    pointer-events: none;
+    transition: opacity 0.3s;
+}
+
+#status.hidden {
+    opacity: 0;
+}

@@ -1,0 +1,7 @@
+# Build configuration for Home Assistant App
+# https://developers.home-assistant.io/docs/add-ons/configuration/#add-on-build-options
+build_from:
+  aarch64: "ghcr.io/home-assistant/aarch64-base:3.21"
+  amd64: "ghcr.io/home-assistant/amd64-base:3.21"
+args:
+  ZIG_VERSION: "0.14.1"
