@@ -1,7 +1,0 @@
----
-configuration:
-  port:
-    name: Web Server Port
-    description: >-
-      The port number for the LVGL Dashboard web interface.
-      Default: 8765

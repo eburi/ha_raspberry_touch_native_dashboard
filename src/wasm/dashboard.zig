@@ -6,7 +6,7 @@
 ///! Pages:
 ///!   0 — Logbook:      Position + 24h log sensor cards
 ///!   1 — Anchor Alarm: (placeholder)
-///!   2 — Sails:        Main sail configuration buttons
+///!   2 — Sails:        Main sail, jib & code 0 configuration
 ///!
 ///! Color palette (dark nautical theme):
 ///!   BG_DARK    #220901  — screen / deepest background
@@ -15,12 +15,13 @@
 ///!   ACCENT_2   #BC3908  — active nav icon, highlights
 ///!   FOREGROUND #F6AA1C  — text, values, active buttons
 
+const std = @import("std");
 const lv = @import("lv.zig");
 
 // ============================================================
 // Color palette
 // ============================================================
-const COL_BG_DARK = 0x220901;
+const COL_BG_DARK = 0x180600;
 const COL_BG_MID = 0x621708;
 const COL_ACCENT_1 = 0x941B0C;
 const COL_ACCENT_2 = 0xBC3908;
@@ -68,12 +69,42 @@ var lbl_distance_24h: ?*lv.lv_obj_t = null;
 var lbl_speed_24h: ?*lv.lv_obj_t = null;
 
 // --- Sails page button references ---
-const SAIL_MAIN_OPTIONS = 4;
-var sail_main_btns: [SAIL_MAIN_OPTIONS]?*lv.lv_obj_t = .{ null, null, null, null };
+const SAIL_MAIN_OPTIONS = 5;
+const sail_main_labels = [SAIL_MAIN_OPTIONS][*:0]const u8{
+    "0%",
+    "100%",
+    "Reef 1",
+    "Reef 2",
+    "Reef 3",
+};
+var sail_main_btns: [SAIL_MAIN_OPTIONS]?*lv.lv_obj_t = .{ null, null, null, null, null };
 var sail_main_current: usize = 0; // index of currently active option
 
-// JS callback for sail config changes
-extern fn js_sail_config_changed(sail_id: i32, option_index: i32) void;
+const SAIL_JIB_OPTIONS = 6;
+const sail_jib_labels = [SAIL_JIB_OPTIONS][*:0]const u8{
+    "0%",
+    "100%",
+    "75%",
+    "60%",
+    "40%",
+    "25%",
+};
+var sail_jib_btns: [SAIL_JIB_OPTIONS]?*lv.lv_obj_t = .{ null, null, null, null, null, null };
+var sail_jib_current: usize = 0; // index of currently active jib option
+
+// Code 0 toggle
+var code0_btn: ?*lv.lv_obj_t = null;
+var code0_active: bool = false;
+
+// JS callbacks for sail config changes
+// js_sail_config_changed: passes entity_id string ptr/len + option value string ptr/len
+extern fn js_sail_config_changed(entity_ptr: [*]const u8, entity_len: i32, option_ptr: [*]const u8, option_len: i32) void;
+extern fn js_sail_toggle_changed(entity_ptr: [*]const u8, entity_len: i32, state: i32) void;
+
+// HA entity IDs (null-terminated for convenience, length excludes sentinel)
+const HA_ENTITY_SAIL_MAIN = "input_select.sail_configuration_main";
+const HA_ENTITY_SAIL_JIB = "input_select.sail_configuration_jib";
+const HA_ENTITY_CODE0 = "input_boolean.sail_configuration_code_0_set";
 
 // ============================================================
 // Public API
@@ -122,6 +153,7 @@ fn createNavBar(parent: ?*lv.lv_obj_t) void {
     lv.lv_obj_set_style_radius(bar, 0, lv.LV_PART_MAIN);
     lv.lv_obj_set_style_border_width(bar, 1, lv.LV_PART_MAIN);
     lv.lv_obj_set_style_border_color(bar, lv.lv_color_hex(COL_ACCENT_1), lv.LV_PART_MAIN);
+    lv.lv_obj_set_style_border_side(bar, lv.LV_BORDER_SIDE_LEFT, lv.LV_PART_MAIN);
     lv.lv_obj_set_style_pad_all(bar, 0, lv.LV_PART_MAIN);
     lv.lv_obj_remove_flag(bar, lv.LV_OBJ_FLAG_SCROLLABLE);
 
@@ -129,14 +161,14 @@ fn createNavBar(parent: ?*lv.lv_obj_t) void {
     lv.lv_obj_set_flex_flow(bar, lv.LV_FLEX_FLOW_COLUMN);
     lv.lv_obj_set_flex_align(bar, lv.LV_FLEX_ALIGN_SPACE_EVENLY, lv.LV_FLEX_ALIGN_CENTER, lv.LV_FLEX_ALIGN_CENTER);
 
-    // Nav buttons with icons
-    // LV_SYMBOL_GPS = location arrow (Logbook / position)
-    // LV_SYMBOL_WARNING = alert triangle (Anchor Alarm)
-    // LV_SYMBOL_EJECT = upward triangle (Sails)
+    // Nav buttons with FontAwesome 6 icons
+    // FA_BOOK      = book icon        (Logbook)
+    // FA_ANCHOR    = anchor icon      (Anchor Alarm)
+    // FA_SAILBOAT  = sailboat icon    (Sails)
     const icons = [PAGE_COUNT][*:0]const u8{
-        lv.LV_SYMBOL_GPS,
-        lv.LV_SYMBOL_WARNING,
-        lv.LV_SYMBOL_EJECT,
+        lv.FA_BOOK,
+        lv.FA_ANCHOR,
+        lv.FA_SAILBOAT,
     };
     const page_indices = [PAGE_COUNT]usize{ PAGE_LOGBOOK, PAGE_ANCHOR, PAGE_SAILS };
 
@@ -159,11 +191,11 @@ fn createNavButton(parent: ?*lv.lv_obj_t, icon: [*:0]const u8, page_index: usize
     lv.lv_obj_set_style_border_width(btn, 0, lv.LV_PART_MAIN);
     lv.lv_obj_set_style_shadow_width(btn, 0, lv.LV_PART_MAIN);
 
-    // Icon label
+    // Icon label (using FontAwesome 6 icon font)
     const label = lv.lv_label_create(btn);
     if (label) |lbl| {
         lv.lv_label_set_text(lbl, icon);
-        lv.lv_obj_set_style_text_font(lbl, lv.lv_font_montserrat_28, lv.LV_PART_MAIN);
+        lv.lv_obj_set_style_text_font(lbl, lv.fa_icons_28, lv.LV_PART_MAIN);
         lv.lv_obj_set_style_text_color(lbl, lv.lv_color_hex(COL_TEXT_DIM), lv.LV_PART_MAIN);
         lv.lv_obj_center(lbl);
     }
@@ -441,35 +473,82 @@ fn createSailsPage(parent: ?*lv.lv_obj_t) void {
         lv.lv_obj_align(sl, lv.LV_ALIGN_TOP_LEFT, 0, 0);
     }
 
-    const btn_row = lv.lv_obj_create(content);
-    if (btn_row == null) return;
+    const main_btn_row = lv.lv_obj_create(content);
+    if (main_btn_row == null) return;
 
-    lv.lv_obj_set_size(btn_row, @intCast(content_w), 80);
-    lv.lv_obj_align(btn_row, lv.LV_ALIGN_TOP_LEFT, 0, 30);
-    lv.lv_obj_set_style_bg_opa(btn_row, lv.LV_OPA_TRANSP, lv.LV_PART_MAIN);
-    lv.lv_obj_set_style_border_width(btn_row, 0, lv.LV_PART_MAIN);
-    lv.lv_obj_set_style_pad_all(btn_row, 0, lv.LV_PART_MAIN);
-    lv.lv_obj_set_style_pad_column(btn_row, 12, lv.LV_PART_MAIN);
-    lv.lv_obj_set_flex_flow(btn_row, lv.LV_FLEX_FLOW_ROW);
-    lv.lv_obj_set_flex_align(btn_row, lv.LV_FLEX_ALIGN_START, lv.LV_FLEX_ALIGN_CENTER, lv.LV_FLEX_ALIGN_CENTER);
-    lv.lv_obj_remove_flag(btn_row, lv.LV_OBJ_FLAG_SCROLLABLE);
-
-    const labels = [SAIL_MAIN_OPTIONS][*:0]const u8{
-        "100%",
-        "Reef 1",
-        "Reef 2",
-        "Reef 3",
-    };
+    lv.lv_obj_set_size(main_btn_row, @intCast(content_w), 80);
+    lv.lv_obj_align(main_btn_row, lv.LV_ALIGN_TOP_LEFT, 0, 30);
+    lv.lv_obj_set_style_bg_opa(main_btn_row, lv.LV_OPA_TRANSP, lv.LV_PART_MAIN);
+    lv.lv_obj_set_style_border_width(main_btn_row, 0, lv.LV_PART_MAIN);
+    lv.lv_obj_set_style_pad_all(main_btn_row, 0, lv.LV_PART_MAIN);
+    lv.lv_obj_set_style_pad_column(main_btn_row, 12, lv.LV_PART_MAIN);
+    lv.lv_obj_set_flex_flow(main_btn_row, lv.LV_FLEX_FLOW_ROW);
+    lv.lv_obj_set_flex_align(main_btn_row, lv.LV_FLEX_ALIGN_START, lv.LV_FLEX_ALIGN_CENTER, lv.LV_FLEX_ALIGN_CENTER);
+    lv.lv_obj_remove_flag(main_btn_row, lv.LV_OBJ_FLAG_SCROLLABLE);
 
     for (0..SAIL_MAIN_OPTIONS) |i| {
-        sail_main_btns[i] = createSailButton(btn_row, labels[i], i);
+        sail_main_btns[i] = createSailButton(main_btn_row, sail_main_labels[i], i, sailMainClickCb);
     }
 
     // Highlight the default (first option)
     updateSailMainHighlight(0);
+
+    // --- Jib row ---
+    const jib_y: i32 = 130;
+    const jib_label = lv.lv_label_create(content);
+    if (jib_label) |jl| {
+        lv.lv_label_set_text(jl, "Jib");
+        lv.lv_obj_set_style_text_color(jl, lv.lv_color_hex(COL_ACCENT_2), lv.LV_PART_MAIN);
+        lv.lv_obj_set_style_text_font(jl, lv.lv_font_montserrat_16, lv.LV_PART_MAIN);
+        lv.lv_obj_align(jl, lv.LV_ALIGN_TOP_LEFT, 0, jib_y);
+    }
+
+    const jib_btn_row = lv.lv_obj_create(content);
+    if (jib_btn_row == null) return;
+
+    lv.lv_obj_set_size(jib_btn_row, @intCast(content_w), 80);
+    lv.lv_obj_align(jib_btn_row, lv.LV_ALIGN_TOP_LEFT, 0, jib_y + 30);
+    lv.lv_obj_set_style_bg_opa(jib_btn_row, lv.LV_OPA_TRANSP, lv.LV_PART_MAIN);
+    lv.lv_obj_set_style_border_width(jib_btn_row, 0, lv.LV_PART_MAIN);
+    lv.lv_obj_set_style_pad_all(jib_btn_row, 0, lv.LV_PART_MAIN);
+    lv.lv_obj_set_style_pad_column(jib_btn_row, 12, lv.LV_PART_MAIN);
+    lv.lv_obj_set_flex_flow(jib_btn_row, lv.LV_FLEX_FLOW_ROW);
+    lv.lv_obj_set_flex_align(jib_btn_row, lv.LV_FLEX_ALIGN_START, lv.LV_FLEX_ALIGN_CENTER, lv.LV_FLEX_ALIGN_CENTER);
+    lv.lv_obj_remove_flag(jib_btn_row, lv.LV_OBJ_FLAG_SCROLLABLE);
+
+    for (0..SAIL_JIB_OPTIONS) |i| {
+        sail_jib_btns[i] = createSailButton(jib_btn_row, sail_jib_labels[i], i, sailJibClickCb);
+    }
+
+    // Highlight the default (first option)
+    updateSailJibHighlight(0);
+
+    // --- Code 0 toggle ---
+    const code0_y: i32 = 260;
+    const code0_label = lv.lv_label_create(content);
+    if (code0_label) |cl| {
+        lv.lv_label_set_text(cl, "Code 0");
+        lv.lv_obj_set_style_text_color(cl, lv.lv_color_hex(COL_ACCENT_2), lv.LV_PART_MAIN);
+        lv.lv_obj_set_style_text_font(cl, lv.lv_font_montserrat_16, lv.LV_PART_MAIN);
+        lv.lv_obj_align(cl, lv.LV_ALIGN_TOP_LEFT, 0, code0_y);
+    }
+
+    const code0_row = lv.lv_obj_create(content);
+    if (code0_row == null) return;
+
+    lv.lv_obj_set_size(code0_row, @intCast(content_w), 80);
+    lv.lv_obj_align(code0_row, lv.LV_ALIGN_TOP_LEFT, 0, code0_y + 30);
+    lv.lv_obj_set_style_bg_opa(code0_row, lv.LV_OPA_TRANSP, lv.LV_PART_MAIN);
+    lv.lv_obj_set_style_border_width(code0_row, 0, lv.LV_PART_MAIN);
+    lv.lv_obj_set_style_pad_all(code0_row, 0, lv.LV_PART_MAIN);
+    lv.lv_obj_set_flex_flow(code0_row, lv.LV_FLEX_FLOW_ROW);
+    lv.lv_obj_set_flex_align(code0_row, lv.LV_FLEX_ALIGN_START, lv.LV_FLEX_ALIGN_CENTER, lv.LV_FLEX_ALIGN_CENTER);
+    lv.lv_obj_remove_flag(code0_row, lv.LV_OBJ_FLAG_SCROLLABLE);
+
+    code0_btn = createToggleButton(code0_row, false);
 }
 
-fn createSailButton(parent: ?*lv.lv_obj_t, text: [*:0]const u8, option_index: usize) ?*lv.lv_obj_t {
+fn createSailButton(parent: ?*lv.lv_obj_t, text: [*:0]const u8, option_index: usize, cb: lv.c.lv_event_cb_t) ?*lv.lv_obj_t {
     if (parent == null) return null;
 
     const btn = lv.lv_button_create(parent);
@@ -494,7 +573,7 @@ fn createSailButton(parent: ?*lv.lv_obj_t, text: [*:0]const u8, option_index: us
     }
 
     const user_data: ?*anyopaque = @ptrFromInt(option_index);
-    _ = lv.lv_obj_add_event_cb(btn, sailMainClickCb, lv.LV_EVENT_CLICKED, user_data);
+    _ = lv.lv_obj_add_event_cb(btn, cb, lv.LV_EVENT_CLICKED, user_data);
 
     return btn;
 }
@@ -505,17 +584,57 @@ fn sailMainClickCb(e: ?*lv.lv_event_t) callconv(.C) void {
     const option_index: usize = @intFromPtr(user_data);
     if (option_index < SAIL_MAIN_OPTIONS) {
         updateSailMainHighlight(option_index);
-        // Notify JS → HA about the selection
-        // sail_id 0 = main sail
-        js_sail_config_changed(0, @intCast(option_index));
+        const opt = sail_main_labels[option_index];
+        js_sail_config_changed(
+            HA_ENTITY_SAIL_MAIN.ptr,
+            HA_ENTITY_SAIL_MAIN.len,
+            opt,
+            @intCast(std.mem.len(opt)),
+        );
     }
+}
+
+fn sailJibClickCb(e: ?*lv.lv_event_t) callconv(.C) void {
+    if (e == null) return;
+    const user_data = lv.lv_event_get_user_data(e);
+    const option_index: usize = @intFromPtr(user_data);
+    if (option_index < SAIL_JIB_OPTIONS) {
+        updateSailJibHighlight(option_index);
+        const opt = sail_jib_labels[option_index];
+        js_sail_config_changed(
+            HA_ENTITY_SAIL_JIB.ptr,
+            HA_ENTITY_SAIL_JIB.len,
+            opt,
+            @intCast(std.mem.len(opt)),
+        );
+    }
+}
+
+fn code0ClickCb(e: ?*lv.lv_event_t) callconv(.C) void {
+    if (e == null) return;
+    code0_active = !code0_active;
+    updateCode0Style();
+    js_sail_toggle_changed(
+        HA_ENTITY_CODE0.ptr,
+        HA_ENTITY_CODE0.len,
+        if (code0_active) @as(i32, 1) else @as(i32, 0),
+    );
 }
 
 fn updateSailMainHighlight(active_index: usize) void {
     sail_main_current = active_index;
+    updateSailButtonRow(&sail_main_btns, SAIL_MAIN_OPTIONS, active_index);
+}
 
-    for (0..SAIL_MAIN_OPTIONS) |i| {
-        if (sail_main_btns[i]) |btn| {
+fn updateSailJibHighlight(active_index: usize) void {
+    sail_jib_current = active_index;
+    updateSailButtonRow(&sail_jib_btns, SAIL_JIB_OPTIONS, active_index);
+}
+
+/// Generic helper to highlight one button in a row of sail option buttons.
+fn updateSailButtonRow(btns: anytype, count: usize, active_index: usize) void {
+    for (0..count) |i| {
+        if (btns[i]) |btn| {
             const child = lv.c.lv_obj_get_child(btn, 0);
             if (child) |lbl| {
                 if (i == active_index) {
@@ -529,6 +648,55 @@ fn updateSailMainHighlight(active_index: usize) void {
                     lv.lv_obj_set_style_border_color(btn, lv.lv_color_hex(COL_ACCENT_1), lv.LV_PART_MAIN);
                     lv.lv_obj_set_style_text_color(lbl, lv.lv_color_hex(COL_TEXT_DIM), lv.LV_PART_MAIN);
                 }
+            }
+        }
+    }
+}
+
+/// Create a large toggle button for Code 0 (on/off).
+fn createToggleButton(parent: ?*lv.lv_obj_t, initial_state: bool) ?*lv.lv_obj_t {
+    if (parent == null) return null;
+
+    const btn = lv.lv_button_create(parent);
+    if (btn == null) return null;
+
+    lv.lv_obj_set_size(btn, 180, 60);
+    lv.lv_obj_set_style_radius(btn, 10, lv.LV_PART_MAIN);
+    lv.lv_obj_set_style_border_width(btn, 2, lv.LV_PART_MAIN);
+    lv.lv_obj_set_style_shadow_width(btn, 0, lv.LV_PART_MAIN);
+    lv.lv_obj_set_style_bg_opa(btn, lv.LV_OPA_COVER, lv.LV_PART_MAIN);
+
+    const lbl = lv.lv_label_create(btn);
+    if (lbl) |l| {
+        lv.lv_obj_set_style_text_font(l, lv.lv_font_montserrat_20, lv.LV_PART_MAIN);
+        lv.lv_obj_center(l);
+    }
+
+    code0_active = initial_state;
+    _ = lv.lv_obj_add_event_cb(btn, code0ClickCb, lv.LV_EVENT_CLICKED, null);
+
+    // Apply initial style (will set label text + colors)
+    code0_btn = btn;
+    updateCode0Style();
+
+    return btn;
+}
+
+/// Update Code 0 button style based on current state.
+fn updateCode0Style() void {
+    if (code0_btn) |btn| {
+        const child = lv.c.lv_obj_get_child(btn, 0);
+        if (child) |lbl| {
+            if (code0_active) {
+                lv.lv_obj_set_style_bg_color(btn, lv.lv_color_hex(COL_ACCENT_2), lv.LV_PART_MAIN);
+                lv.lv_obj_set_style_border_color(btn, lv.lv_color_hex(COL_FG), lv.LV_PART_MAIN);
+                lv.lv_obj_set_style_text_color(lbl, lv.lv_color_hex(COL_BG_DARK), lv.LV_PART_MAIN);
+                lv.lv_label_set_text(lbl, "SET");
+            } else {
+                lv.lv_obj_set_style_bg_color(btn, lv.lv_color_hex(COL_CARD_BG), lv.LV_PART_MAIN);
+                lv.lv_obj_set_style_border_color(btn, lv.lv_color_hex(COL_ACCENT_1), lv.LV_PART_MAIN);
+                lv.lv_obj_set_style_text_color(lbl, lv.lv_color_hex(COL_TEXT_DIM), lv.LV_PART_MAIN);
+                lv.lv_label_set_text(lbl, "NOT SET");
             }
         }
     }
@@ -563,9 +731,37 @@ export fn update_sensor(sensor_id: i32, value_ptr: [*]const u8, value_len: i32) 
 }
 
 /// Update the main sail selection from HA state.
-/// Called when HA reports the current input_select value.
-/// option_index: 0="100%", 1="Reef 1", 2="Reef 2", 3="Reef 3"
-export fn update_sail_main(option_index: i32) void {
-    const idx: usize = @intCast(@max(0, @min(option_index, SAIL_MAIN_OPTIONS - 1)));
-    updateSailMainHighlight(idx);
+/// Called from JS with the raw HA state string (e.g. "Reef 1", "100%").
+export fn update_sail_main(value_ptr: [*]const u8, value_len: i32) void {
+    const value = value_ptr[0..@intCast(value_len)];
+    for (0..SAIL_MAIN_OPTIONS) |i| {
+        const label = sail_main_labels[i];
+        const label_slice = label[0..std.mem.len(label)];
+        if (std.mem.eql(u8, value, label_slice)) {
+            updateSailMainHighlight(i);
+            return;
+        }
+    }
+}
+
+/// Update the jib selection from HA state.
+/// Called from JS with the raw HA state string (e.g. "75%", "100%").
+export fn update_sail_jib(value_ptr: [*]const u8, value_len: i32) void {
+    const value = value_ptr[0..@intCast(value_len)];
+    for (0..SAIL_JIB_OPTIONS) |i| {
+        const label = sail_jib_labels[i];
+        const label_slice = label[0..std.mem.len(label)];
+        if (std.mem.eql(u8, value, label_slice)) {
+            updateSailJibHighlight(i);
+            return;
+        }
+    }
+}
+
+/// Update the Code 0 toggle from HA state.
+/// Called from JS with the raw HA state string ("on" or "off").
+export fn update_code0(value_ptr: [*]const u8, value_len: i32) void {
+    const value = value_ptr[0..@intCast(value_len)];
+    code0_active = std.mem.eql(u8, value, "on");
+    updateCode0Style();
 }

@@ -1,0 +1,8 @@
+{
+  "name": "LVGL Dashboard",
+  "url": "https://github.com/eburi/lvgl_dashboard",
+  "maintainer": "Erich Buri <erich@buri.com>",
+  "images": [
+    "ghcr.io/eburi/lvgl_dashboard:latest"
+  ]
+}

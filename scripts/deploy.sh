@@ -20,24 +20,22 @@ echo "--- Building deployment archive..."
     cd /workspace
 
     # Create tar with the correct addon directory layout:
-    # - ha_app/* goes to root (config.yaml, Dockerfile, rootfs/, etc.)
-    # - build files go to root
-    # - src/ and web/ go to root
+    # - ha_app/* gets flattened to root (config.yaml, Dockerfile, rootfs/, etc.)
+    # - build files, src/, and web/ go to root as-is
+    # Uses whole directories so new files are automatically included.
     tar czf "${TMPTAR}" \
         --transform='s|^ha_app/||' \
-        ha_app/config.yaml \
-        ha_app/build.yaml \
-        ha_app/Dockerfile \
-        ha_app/run.sh \
-        ha_app/rootfs \
-        ha_app/translations \
+        --exclude='.zig-cache' \
+        --exclude='zig-out' \
+        --exclude='.git' \
+        --exclude='scripts' \
+        --exclude='web/dashboard.wasm' \
+        ha_app \
         build.zig \
         build.zig.zon \
         lv_conf.h \
         src \
-        web/index.html \
-        web/main.js \
-        web/style.css
+        web
 )
 
 ARCHIVE_SIZE=$(du -h "${TMPTAR}" | cut -f1)

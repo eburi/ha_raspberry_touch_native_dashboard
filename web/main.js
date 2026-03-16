@@ -27,19 +27,18 @@ let ws = null;
 
 // Sensor entity ID → WASM sensor_id mapping
 const SENSOR_MAP = {
-    "sensor.primrose_position_latitude_formatted": 0,
-    "sensor.primrose_position_longitude_formatted": 1,
+    "sensor.primrose_latitude": 0,
+    "sensor.primrose_longitude": 1,
     "sensor.primrose_log_change_24h": 2,
-    "sensor.average_speed_24h": 3,
+    "sensor.average_speed_over_24h": 3,
 };
 
-// Sail input_select entity → sail_id mapping
-const SAIL_ENTITIES = {
-    0: "input_select.sail_configuration_main",
-};
-
-// Sail option value → index mapping
-const SAIL_MAIN_OPTIONS = ["100%", "Reef 1", "Reef 2", "Reef 3"];
+// Sail and toggle entities (used only for subscribe list and routing state updates)
+const SAIL_SELECT_ENTITIES = [
+    "input_select.sail_configuration_main",
+    "input_select.sail_configuration_jib",
+];
+const TOGGLE_ENTITY = "input_boolean.sail_configuration_code_0_set";
 
 /**
  * Determine the base path for this app.
@@ -115,25 +114,23 @@ function js_get_time() {
 }
 
 /**
- * WASM import: called when a sail config button is pressed in the UI.
- * Sends the new selection to the server which relays to HA.
- * sail_id: 0 = main sail
- * option_index: index into the options array
+ * Read a UTF-8 string from WASM linear memory.
  */
-function js_sail_config_changed(sail_id, option_index) {
-    const entity_id = SAIL_ENTITIES[sail_id];
-    if (!entity_id) return;
+function readWasmString(ptr, len) {
+    const bytes = new Uint8Array(wasmMemory.buffer, ptr, len);
+    return new TextDecoder().decode(bytes);
+}
 
-    let option_value;
-    if (sail_id === 0) {
-        option_value = SAIL_MAIN_OPTIONS[option_index];
-    }
-
-    if (!option_value) return;
+/**
+ * WASM import: called when a sail config button is pressed in the UI.
+ * WASM passes entity_id and option value as raw strings (ptr+len pairs).
+ */
+function js_sail_config_changed(entity_ptr, entity_len, option_ptr, option_len) {
+    const entity_id = readWasmString(entity_ptr, entity_len);
+    const option_value = readWasmString(option_ptr, option_len);
 
     console.log(`[Sail] ${entity_id} → ${option_value}`);
 
-    // Send to server via WebSocket
     if (ws && ws.readyState === WebSocket.OPEN) {
         ws.send(JSON.stringify({
             type: "call_service",
@@ -148,32 +145,66 @@ function js_sail_config_changed(sail_id, option_index) {
 }
 
 /**
+ * WASM import: called when a sail toggle button is pressed in the UI.
+ * WASM passes entity_id as a raw string (ptr+len) and state as 0/1.
+ */
+function js_sail_toggle_changed(entity_ptr, entity_len, state) {
+    const entity_id = readWasmString(entity_ptr, entity_len);
+    const service = state ? "turn_on" : "turn_off";
+
+    console.log(`[Toggle] ${entity_id} → ${service}`);
+
+    if (ws && ws.readyState === WebSocket.OPEN) {
+        ws.send(JSON.stringify({
+            type: "call_service",
+            domain: "input_boolean",
+            service: service,
+            service_data: {
+                entity_id: entity_id,
+            },
+        }));
+    }
+}
+
+/**
+ * Write a string into WASM scratch memory and return { ptr, len }.
+ * Uses a fixed scratch area at offset 60MB in WASM linear memory.
+ */
+const SCRATCH_OFFSET = 60 * 1024 * 1024;
+function writeStringToWasm(value, offset) {
+    const encoder = new TextEncoder();
+    const encoded = encoder.encode(value);
+    const mem = new Uint8Array(wasmMemory.buffer);
+    const ptr = SCRATCH_OFFSET + (offset || 0);
+
+    if (ptr + encoded.length > mem.length) return null;
+    mem.set(encoded, ptr);
+    return { ptr, len: encoded.length };
+}
+
+/**
  * Write a string into WASM memory and call update_sensor.
  */
 function pushSensorValue(sensorId, value) {
     if (!wasm) return;
     const encoder = new TextEncoder();
-    const encoded = encoder.encode(value + "\0"); // null-terminated
-    const len = encoded.length;
-
-    // Allocate in WASM memory — use a fixed scratch area at the end of
-    // the framebuffer region. The framebuffer is at a known location,
-    // so we use a region after it. For simplicity, write to a scratch
-    // buffer starting at a high offset in WASM linear memory.
-    // WASM memory is 64MB initial, we use a 4KB scratch at offset 60MB.
-    const SCRATCH_OFFSET = 60 * 1024 * 1024;
+    const encoded = encoder.encode(value + "\0"); // null-terminated for LVGL
     const mem = new Uint8Array(wasmMemory.buffer);
 
-    if (SCRATCH_OFFSET + len > mem.length) return;
+    if (SCRATCH_OFFSET + encoded.length > mem.length) return;
     mem.set(encoded, SCRATCH_OFFSET);
 
-    wasm.instance.exports.update_sensor(sensorId, SCRATCH_OFFSET, len - 1);
+    wasm.instance.exports.update_sensor(sensorId, SCRATCH_OFFSET, encoded.length - 1);
 }
 
 /**
  * Process a state update message from the server.
+ * Routes entity state to the appropriate WASM export.
+ * All knowledge of options/values lives in WASM — JS just passes raw strings.
  */
 function handleStateUpdate(entityId, state) {
+    if (!wasm) return;
+
     // Check sensor map
     const sensorId = SENSOR_MAP[entityId];
     if (sensorId !== undefined) {
@@ -181,12 +212,24 @@ function handleStateUpdate(entityId, state) {
         return;
     }
 
-    // Check sail entities
+    // Sail input_select entities — pass raw state string to WASM
     if (entityId === "input_select.sail_configuration_main") {
-        const idx = SAIL_MAIN_OPTIONS.indexOf(state);
-        if (idx >= 0 && wasm) {
-            wasm.instance.exports.update_sail_main(idx);
-        }
+        const s = writeStringToWasm(state);
+        if (s) wasm.instance.exports.update_sail_main(s.ptr, s.len);
+        return;
+    }
+
+    if (entityId === "input_select.sail_configuration_jib") {
+        const s = writeStringToWasm(state);
+        if (s) wasm.instance.exports.update_sail_jib(s.ptr, s.len);
+        return;
+    }
+
+    // Toggle entity — pass raw state string to WASM
+    if (entityId === "input_boolean.sail_configuration_code_0_set") {
+        const s = writeStringToWasm(state);
+        if (s) wasm.instance.exports.update_code0(s.ptr, s.len);
+        return;
     }
 }
 
@@ -287,11 +330,9 @@ function connectWebSocket() {
             ws.send(JSON.stringify({
                 type: "subscribe",
                 entities: [
-                    "sensor.primrose_position_latitude_formatted",
-                    "sensor.primrose_position_longitude_formatted",
-                    "sensor.primrose_log_change_24h",
-                    "sensor.average_speed_24h",
-                    "input_select.sail_configuration_main",
+                    ...Object.keys(SENSOR_MAP),
+                    ...SAIL_SELECT_ENTITIES,
+                    TOGGLE_ENTITY,
                 ],
             }));
             // Request current states
@@ -319,14 +360,18 @@ function connectWebSocket() {
 }
 
 function handleWSMessage(msg) {
-    if (msg.type === "state_changed" || msg.type === "state") {
-        // Single entity update
-        if (msg.entity_id && msg.state !== undefined) {
+    if (msg.type === "state_changed") {
+        // Real-time state change from HA — msg.data is the full new_state object
+        if (msg.data && msg.data.entity_id && msg.data.state !== undefined) {
+            handleStateUpdate(msg.data.entity_id, String(msg.data.state));
+        } else if (msg.entity_id && msg.state !== undefined) {
+            // Fallback for simple format
             handleStateUpdate(msg.entity_id, String(msg.state));
         }
     } else if (msg.type === "states") {
-        // Bulk state response
+        // Bulk state response — msg.data is an array of full HA state objects
         if (Array.isArray(msg.data)) {
+            console.log(`[WS] Received bulk states: ${msg.data.length} entities`);
             for (const entity of msg.data) {
                 if (entity.entity_id && entity.state !== undefined) {
                     handleStateUpdate(entity.entity_id, String(entity.state));
@@ -361,6 +406,7 @@ async function main() {
                 js_flush: js_flush,
                 js_get_time: js_get_time,
                 js_sail_config_changed: js_sail_config_changed,
+                js_sail_toggle_changed: js_sail_toggle_changed,
             },
         };
 

@@ -67,6 +67,21 @@ pub fn build(b: *std.Build) !void {
         },
     });
 
+    // Add custom font C files (FontAwesome 6 icons converted via lv_font_conv)
+    wasm_lib.addCSourceFiles(.{
+        .files = &.{
+            "src/wasm/fa_icons_28.c",
+            "src/wasm/fa_icons_20.c",
+        },
+        .flags = &.{
+            "-DLV_LVGL_H_INCLUDE_SIMPLE=1",
+            "-DLV_CONF_INCLUDE_SIMPLE=1",
+            "-std=c99",
+            "-fno-sanitize=undefined",
+            "-D__wasm__",
+        },
+    });
+
     // Install the WASM binary
     const install_wasm = b.addInstallArtifact(wasm_lib, .{});
     const wasm_step = b.step("wasm", "Build the WASM dashboard module");

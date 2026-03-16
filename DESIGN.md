@@ -69,17 +69,23 @@ Minimal lv_conf.h with only the features needed:
 
 ## Future Plans
 
-### Phase 1 (Current): Static Dashboard
+### Phase 1 (Complete): Static Dashboard
 - Hardcoded card layout with sample HA entities
 - Web-only rendering (no native framebuffer)
 - REST API proxy to HA (basic)
 - WebSocket state relay (scaffold)
 
-### Phase 2: HA Integration
-- Full HA WebSocket API integration (subscribe to state changes)
-- Real-time entity state updates on dashboard cards
-- Service call support (toggle lights, set thermostat, etc.)
-- Configuration via HA app options (entity selection)
+### Phase 2 (Complete): HA Integration
+- Full HA WebSocket API integration via `ha_client.zig`:
+  - Raw TCP + manual WebSocket framing to HA WS API
+  - Auth flow (auth_required → auth → auth_ok)
+  - Subscribes to `state_changed` events for real-time updates
+  - Initial `get_states` fetch with state caching
+  - Reconnection with exponential backoff
+- Real-time entity state relay to browser clients via facil.io pub/sub channels
+- Service call forwarding (browser → server → HA REST API)
+- HA REST API proxy (`/api/ha/*` → HA Supervisor API) using `std.http.Client`
+- Server-side architecture: Browser ↔ WebSocket ↔ Zap Server ↔ HA WebSocket/REST API
 
 ### Phase 3: Native Display
 - Framebuffer rendering on RPi Touch Display 2
@@ -113,9 +119,10 @@ Minimal lv_conf.h with only the features needed:
 │   │   ├── libc.zig             # C stdlib stubs (memset, memcpy, etc.)
 │   │   └── dashboard.zig        # UI layout (cards, header)
 │   ├── server/
-│   │   ├── main.zig             # Zap server: static files, routing
-│   │   ├── routes.zig           # REST endpoints
-│   │   └── websocket.zig        # WebSocket handler
+│   │   ├── main.zig             # Zap server: static files, routing, HA lifecycle
+│   │   ├── routes.zig           # REST endpoints + HA API proxy
+│   │   ├── websocket.zig        # WebSocket handler (facil.io pub/sub)
+│   │   └── ha_client.zig        # HA WebSocket API client + REST proxy
 │   └── native/
 │       ├── probe.zig            # Hardware detection
 │       ├── fbdev.zig            # Framebuffer driver (future)

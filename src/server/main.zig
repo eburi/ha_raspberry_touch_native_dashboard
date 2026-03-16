@@ -1,18 +1,18 @@
 ///! Zap web server — serves the WASM dashboard, REST API, and WebSocket.
 ///!
 ///! Routes:
-///!   GET /              → web/index.html
-///!   GET /*.js|css|wasm → static files from web/
-///!   GET /api/health    → health check
-///!   GET /api/config    → app configuration
-///!   GET /api/ha/states → proxy to HA REST API
-///!   WS  /ws            → WebSocket for real-time HA state relay
+///!   GET /              -> web/index.html
+///!   GET /*.js|css|wasm -> static files from web/
+///!   GET /api/health    -> health check
+///!   GET /api/config    -> app configuration
+///!   GET /api/ha/*      -> proxy to HA REST API
+///!   WS  /ws            -> WebSocket for real-time HA state relay
 ///!
 ///! NOTE: We do NOT use facil.io's `public_folder` for static file serving.
 ///! Instead, all files are served explicitly in onRequest with proper Content-Type
 ///! headers. This is necessary because:
 ///!   1. facil.io's public_folder bypasses onRequest entirely for matched files,
-///!      preventing us from normalizing paths (e.g. "//" → "/") or adding headers.
+///!      preventing us from normalizing paths (e.g. "//" -> "/") or adding headers.
 ///!   2. HA's ingress proxy produces "//" paths (from ingress_entry: "/"),
 ///!      which must be normalized before file lookup.
 ///!   3. We need guaranteed Content-Type headers for HA ingress to work
@@ -22,6 +22,7 @@ const std = @import("std");
 const zap = @import("zap");
 const routes = @import("routes.zig");
 const websocket = @import("websocket.zig");
+const ha_client = @import("ha_client.zig");
 
 /// Server configuration
 pub const Config = struct {
@@ -71,14 +72,27 @@ pub fn main() !void {
         std.log.warn("No SUPERVISOR_TOKEN — HA API proxy will be unavailable", .{});
     }
 
-    // Initialize WebSocket handler
+    // Initialize modules
     websocket.init(allocator);
+    routes.init(allocator);
+    ha_client.init(allocator, .{
+        .ha_url = config.ha_url,
+        .token = config.supervisor_token,
+    });
+
+    // Start the HA client background connection (connects to HA WebSocket API)
+    ha_client.start() catch |err| {
+        std.log.err("Failed to start HA client: {}", .{err});
+        // Non-fatal — server still works, just no live HA data
+    };
 
     // Set up the Zap listener — NO public_folder (we serve files manually)
+    // on_upgrade handles WebSocket upgrade requests via facil.io's protocol
     var listener = zap.HttpListener.init(.{
         .port = @as(usize, config.port),
         .on_request = onRequest,
         .on_response = null,
+        .on_upgrade = onUpgrade,
         .log = false,
         .max_clients = @as(isize, 100),
         .public_folder = null,
@@ -94,6 +108,32 @@ pub fn main() !void {
         .threads = 2,
         .workers = 1,
     });
+
+    // Cleanup on shutdown
+    ha_client.stop();
+}
+
+/// Handle WebSocket upgrade requests. facil.io routes upgrade requests
+/// here instead of to onRequest.
+fn onUpgrade(r: zap.Request, target_protocol: []const u8) anyerror!void {
+    if (std.mem.eql(u8, target_protocol, "websocket")) {
+        const raw_path = r.path orelse "/";
+
+        // Normalize path (same as onRequest)
+        var path = raw_path;
+        while (path.len > 1 and path[0] == '/' and path[1] == '/') {
+            path = path[1..];
+        }
+
+        if (std.mem.eql(u8, path, "/ws")) {
+            websocket.handleUpgrade(r);
+            return;
+        }
+    }
+
+    // Not a WebSocket upgrade we handle — reject
+    r.setStatus(.bad_request);
+    r.sendBody("400 - Bad Request") catch {};
 }
 
 fn onRequest(r: zap.Request) anyerror!void {
@@ -108,16 +148,6 @@ fn onRequest(r: zap.Request) anyerror!void {
 
     // Log request for debugging ingress issues
     std.log.info("Request: {s} -> {s}", .{ raw_path, path });
-
-    // WebSocket upgrade
-    if (std.mem.eql(u8, path, "/ws")) {
-        websocket.handleUpgrade(r) catch |err| {
-            std.log.err("WebSocket upgrade failed: {}", .{err});
-            r.setStatus(.bad_request);
-            r.sendBody("WebSocket upgrade failed") catch {};
-        };
-        return;
-    }
 
     // API routes
     if (std.mem.startsWith(u8, path, "/api/")) {

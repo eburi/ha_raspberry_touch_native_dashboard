@@ -1,0 +1,43 @@
+# Home Assistant App configuration
+# https://developers.home-assistant.io/docs/apps
+name: "LVGL Dashboard"
+version: "0.4.0"
+slug: lvgl_dashboard
+description: >-
+  Touch-screen dashboard built with LVGL graphics library, compiled to WASM
+  and rendered in the browser via HTML5 Canvas. Designed for a 1280x720
+  nautical dashboard with sail configuration controls.
+url: "https://github.com/eburi/lvgl_dashboard"
+arch:
+  - aarch64
+# image: ghcr.io/eburi/lvgl_dashboard/{arch}  # uncomment once CI publishes images
+init: false
+startup: application
+
+# Resource access
+homeassistant_api: true
+
+# Device access for native framebuffer + touch input rendering
+devices:
+  - /dev/fb0
+  - /dev/input
+
+# Ingress (web UI served through HA proxy)
+ingress: true
+ingress_port: 8765
+ingress_entry: "/"
+panel_icon: "mdi:view-dashboard"
+panel_title: "LVGL Dashboard"
+
+# User-configurable options (available via bashio::config)
+options:
+  port: 8765
+schema:
+  port: "int(1,65535)"
+
+# Startup behavior
+boot: auto
+
+# Map persistent storage
+map:
+  - config:rw
