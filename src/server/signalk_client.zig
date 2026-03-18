@@ -302,7 +302,7 @@ fn ensureAuthAndPoll(base: []const u8) !void {
         const cid = ensureClientId();
         defer allocator.free(cid);
 
-        const payload = std.fmt.allocPrint(allocator, "{{\"clientId\":\"{s}\",\"description\":\"LVGL Dashboard Anchor Alarm\"}}", .{cid}) catch return error.OutOfMemory;
+        const payload = std.fmt.allocPrint(allocator, "{{\"clientId\":\"{s}\",\"description\":\"Raspberry Pi Touchscreen native Dashboard for HAOS Anchor Alarm\"}}", .{cid}) catch return error.OutOfMemory;
         defer allocator.free(payload);
 
         const resp = postNoToken(base, "/signalk/v1/access/requests", payload) catch |err| {

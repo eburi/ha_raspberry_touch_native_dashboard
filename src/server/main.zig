@@ -66,7 +66,7 @@ pub fn main() !void {
     // Read configuration
     config = readConfig();
 
-    std.log.info("LVGL Dashboard Server starting on port {d}", .{config.port});
+    std.log.info("Raspberry Pi Touchscreen native Dashboard for HAOS server starting on port {d}", .{config.port});
     if (config.supervisor_token != null) {
         std.log.info("Home Assistant Supervisor token found", .{});
     } else {

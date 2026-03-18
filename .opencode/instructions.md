@@ -17,7 +17,7 @@
 
 - The local Home Assistant instance runs on a Raspberry Pi. Use SSH to connect for deployment, testing, and debugging:
   - Default host: `root@192.168.46.222`
-  - App path on device: `/addons/lvgl_dashboard`
+  - App path on device: `/addons/ha_raspberry_touch_native_dashboard`
   - SSH into HA to run commands, check logs, restart the app, etc.
   - Use `docker exec addon_a0d7b954_ssh ha apps ...` to interact with the HA CLI from SSH.
 

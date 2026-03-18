@@ -1,16 +1,16 @@
 # Home Assistant App configuration
 # https://developers.home-assistant.io/docs/apps
-name: "LVGL Dashboard"
+name: "Raspberry Pi Touchscreen native Dashboard for HAOS"
 version: "0.4.0"
-slug: lvgl_dashboard
+slug: ha_raspberry_touch_native_dashboard
 description: >-
   Touch-screen dashboard built with LVGL graphics library, compiled to WASM
   and rendered in the browser via HTML5 Canvas. Designed for a 1280x720
   nautical dashboard with sail configuration controls.
-url: "https://github.com/eburi/lvgl_dashboard"
+url: "https://github.com/eburi/ha_raspberry_touch_native_dashboard"
 arch:
   - aarch64
-# image: ghcr.io/eburi/lvgl_dashboard/{arch}  # uncomment once CI publishes images
+image: ghcr.io/eburi/ha_raspberry_touch_native_dashboard/{arch}
 init: false
 startup: application
 
@@ -26,7 +26,7 @@ devices:
 ingress: true
 ingress_port: 8765
 panel_icon: "mdi:view-dashboard"
-panel_title: "LVGL Dashboard"
+panel_title: "Raspberry Pi Touchscreen native Dashboard for HAOS"
 
 # User-configurable options (available via bashio::config)
 options:

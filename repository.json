@@ -1,8 +1,8 @@
 {
-  "name": "LVGL Dashboard",
-  "url": "https://github.com/eburi/lvgl_dashboard",
+  "name": "Raspberry Pi Touchscreen native Dashboard for HAOS",
+  "url": "https://github.com/eburi/ha_raspberry_touch_native_dashboard",
   "maintainer": "Erich Buri <erich@buri.com>",
   "images": [
-    "ghcr.io/eburi/lvgl_dashboard:latest"
+    "ghcr.io/eburi/ha_raspberry_touch_native_dashboard:latest"
   ]
 }

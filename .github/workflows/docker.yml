@@ -28,13 +28,13 @@ jobs:
 
       - name: Copy source into app directory
         run: |
-          cp build.zig build.zig.zon lv_conf.h lvgl_dashboard/
-          cp -r src lvgl_dashboard/src
-          cp -r web lvgl_dashboard/web
+          cp build.zig build.zig.zon lv_conf.h ha_raspberry_touch_native_dashboard/
+          cp -r src ha_raspberry_touch_native_dashboard/src
+          cp -r web ha_raspberry_touch_native_dashboard/web
 
       - name: Build and push
         uses: home-assistant/builder@2026.02.1
         with:
           args: |
             --amd64 --aarch64 \
-            --target lvgl_dashboard
+            --target ha_raspberry_touch_native_dashboard

@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-# Deploy lvgl_dashboard HA App to a Home Assistant device.
+# Deploy ha_raspberry_touch_native_dashboard HA App to a Home Assistant device.
 #
 # Usage:
 #   ./local_deploy.sh [user@host]
@@ -9,12 +9,12 @@ set -euo pipefail
 # Default target: root@192.168.46.222
 #
 # This script:
-# 1. Assembles a self-contained app directory in /tmp/lvgl_dashboard_app/
-# 2. Copies it to /addons/lvgl_dashboard/ on the HA device via scp
+# 1. Assembles a self-contained app directory in /tmp/ha_raspberry_touch_native_dashboard_app/
+# 2. Copies it to /addons/ha_raspberry_touch_native_dashboard/ on the HA device via scp
 # 3. Prints instructions for installing/rebuilding in HA
 
 TARGET="${1:-root@192.168.46.222}"
-APP_NAME="lvgl_dashboard"
+APP_NAME="ha_raspberry_touch_native_dashboard"
 SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
 PROJECT_DIR="$SCRIPT_DIR"
 BUILD_DIR="/tmp/${APP_NAME}_app"
@@ -70,7 +70,7 @@ echo ""
 echo "Next steps on Home Assistant:"
 echo "  1. Go to Settings -> Apps -> App Store"
 echo "  2. Click (top right) -> Check for updates / Reload"
-echo "  3. Find 'LVGL Dashboard' in the Local apps section"
+echo "  3. Find 'Raspberry Pi Touchscreen native Dashboard for HAOS' in the Local apps section"
 echo "  4. Click Install (first time) or Rebuild (update)"
 echo "  5. Start the app and check logs"
 echo ""

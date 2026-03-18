@@ -1,5 +1,5 @@
 /**
- * LVGL Dashboard — WASM loader and runtime
+ * Raspberry Pi Touchscreen native Dashboard for HAOS — WASM loader and runtime
  *
  * Loads the WASM binary, sets up the Canvas, routes mouse/touch input
  * to LVGL, and runs the render loop via requestAnimationFrame.

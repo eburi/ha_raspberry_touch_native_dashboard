@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 set -e
 
-# HA App entry point for LVGL Dashboard.
+# HA App entry point for Raspberry Pi Touchscreen native Dashboard for HAOS.
 # Reads user configuration from /data/options.json and launches the Zig server.
 
 # Source bashio for logging helpers (optional, graceful fallback)
@@ -45,5 +45,5 @@ else
     log_warning "No SUPERVISOR_TOKEN"
 fi
 
-log_info "Starting LVGL Dashboard server on port ${PORT}"
+log_info "Starting Raspberry Pi Touchscreen native Dashboard for HAOS server on port ${PORT}"
 exec /usr/local/bin/lvgl-server

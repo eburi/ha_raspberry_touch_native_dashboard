@@ -86,9 +86,9 @@ else
   exit 1
 fi
 
-addon_name="$($runtime ps --format '{{.Names}}' | awk '/addon_.*lvgl_dashboard/ { print; exit }')"
+addon_name="$($runtime ps --format '{{.Names}}' | awk '/addon_.*ha_raspberry_touch_native_dashboard/ { print; exit }')"
 if [ -z "$addon_name" ]; then
-  echo "Could not find running lvgl_dashboard addon container" >&2
+  echo "Could not find running ha_raspberry_touch_native_dashboard addon container" >&2
   exit 1
 fi
 

@@ -1,4 +1,4 @@
-# LVGL Dashboard — Architecture & Design
+# Raspberry Pi Touchscreen native Dashboard for HAOS — Architecture & Design
 
 ## Overview
 
@@ -131,7 +131,7 @@ Minimal lv_conf.h with only the features needed:
 │   ├── index.html               # Canvas shell
 │   ├── main.js                  # WASM loader, rAF loop, input, WS
 │   └── style.css                # Dark theme, centered canvas
-├── lvgl_dashboard/
+├── ha_raspberry_touch_native_dashboard/
 │   ├── config.yaml              # HA App manifest
 │   ├── build.yaml               # Build config
 │   ├── Dockerfile               # Multi-stage: Zig builder → Alpine
