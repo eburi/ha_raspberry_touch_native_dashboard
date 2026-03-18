@@ -16,6 +16,8 @@ startup: application
 
 # Resource access
 homeassistant_api: true
+hassio_api: true
+hassio_role: default
 
 # Device access for native framebuffer + touch input rendering
 devices:
@@ -31,8 +33,12 @@ panel_title: "Raspberry Pi Touchscreen native Dashboard for HAOS"
 # User-configurable options (available via bashio::config)
 options:
   port: 8765
+  log_level: info
+  signalk_url: ""
 schema:
   port: "int(1,65535)"
+  log_level: "list(error|warning|info|debug)"
+  signalk_url: "str"
 
 # Startup behavior
 boot: auto

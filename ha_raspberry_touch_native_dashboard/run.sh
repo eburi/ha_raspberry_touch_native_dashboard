@@ -21,15 +21,27 @@ log_info "Reading app configuration..."
 OPTIONS_FILE="/data/options.json"
 if [ -f "$OPTIONS_FILE" ]; then
     PORT="$(jq -r '.port // 8765' "$OPTIONS_FILE")"
+    LOG_LEVEL="$(jq -r '.log_level // "info"' "$OPTIONS_FILE")"
+    SIGNALK_URL="$(jq -r '.signalk_url // ""' "$OPTIONS_FILE")"
 else
     log_warning "No options file found, using defaults"
     PORT="8765"
+    LOG_LEVEL="info"
+    SIGNALK_URL=""
 fi
 
 log_info "Port: ${PORT}"
+log_info "Log level: ${LOG_LEVEL}"
+if [ -n "${SIGNALK_URL}" ]; then
+    log_info "SignalK URL override: ${SIGNALK_URL}"
+fi
 
 export PORT
 export WEB_ROOT="/app/web"
+export LOG_LEVEL
+if [ -n "${SIGNALK_URL}" ]; then
+    export SIGNALK_URL
+fi
 
 # Check for display hardware
 if [ -e /dev/fb0 ]; then

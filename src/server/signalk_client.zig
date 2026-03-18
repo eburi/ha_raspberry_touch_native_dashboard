@@ -34,6 +34,8 @@ var persist_mutex: std.Thread.Mutex = .{};
 var persistent: PersistentState = .{};
 var state_file_path: []const u8 = "signalk_auth.json";
 var broadcaster: ?*const fn ([]const u8) void = null;
+var base_url_override: ?[]u8 = null;
+var supervisor_token: ?[]u8 = null;
 
 pub fn setBroadcaster(cb: *const fn ([]const u8) void) void {
     broadcaster = cb;
@@ -44,6 +46,38 @@ const DISCOVERY_URLS = [_][]const u8{
     "http://127.0.0.1:3000",
     "http://signalk:3000",
 };
+
+pub fn setBaseUrlOverride(maybe_url: ?[]const u8) void {
+    persist_mutex.lock();
+    defer persist_mutex.unlock();
+
+    if (base_url_override) |old| {
+        allocator.free(old);
+        base_url_override = null;
+    }
+
+    if (maybe_url) |url| {
+        if (url.len > 0) {
+            base_url_override = allocator.dupe(u8, url) catch null;
+        }
+    }
+}
+
+pub fn setSupervisorToken(maybe_token: ?[]const u8) void {
+    persist_mutex.lock();
+    defer persist_mutex.unlock();
+
+    if (supervisor_token) |old| {
+        allocator.free(old);
+        supervisor_token = null;
+    }
+
+    if (maybe_token) |token| {
+        if (token.len > 0) {
+            supervisor_token = allocator.dupe(u8, token) catch null;
+        }
+    }
+}
 
 pub fn init(alloc: std.mem.Allocator) void {
     allocator = alloc;
@@ -87,6 +121,8 @@ pub fn deinit() void {
     if (persistent.request_href) |v| allocator.free(v);
     if (persistent.token) |v| allocator.free(v);
     if (persistent.base_url) |v| allocator.free(v);
+    if (base_url_override) |v| allocator.free(v);
+    if (supervisor_token) |v| allocator.free(v);
 
     if (state_file_path.len > 0 and !std.mem.eql(u8, state_file_path, "signalk_auth.json")) {
         if (!std.mem.eql(u8, state_file_path, "/data/signalk_auth.json")) {
@@ -261,8 +297,20 @@ fn workerLoop() void {
 }
 
 fn ensureBaseUrl() ![]u8 {
+    if (base_url_override) |override| {
+        log.debug("Trying configured SignalK URL: {s}", .{override});
+        if (checkSignalKAvailable(override)) {
+            setBaseUrl(override);
+            savePersistentState();
+            publishStatus(.requesting, "SignalK detected");
+            return allocator.dupe(u8, override);
+        }
+        log.warn("Configured SignalK URL is unreachable: {s}", .{override});
+    }
+
     if (getBaseUrl()) |saved| {
         defer allocator.free(saved);
+        log.debug("Trying persisted SignalK URL: {s}", .{saved});
         if (checkSignalKAvailable(saved)) {
             return allocator.dupe(u8, saved);
         }
@@ -270,7 +318,16 @@ fn ensureBaseUrl() ![]u8 {
 
     publishStatus(.detecting, "Detecting SignalK...");
 
+    if (discoverSignalKViaSupervisor()) |url| {
+        defer allocator.free(url);
+        setBaseUrl(url);
+        savePersistentState();
+        publishStatus(.requesting, "SignalK detected");
+        return allocator.dupe(u8, url);
+    }
+
     for (DISCOVERY_URLS) |url| {
+        log.debug("Trying SignalK discovery URL: {s}", .{url});
         if (checkSignalKAvailable(url)) {
             setBaseUrl(url);
             savePersistentState();
@@ -384,9 +441,149 @@ fn fetchAndBroadcast(base: []const u8, token: []const u8) !bool {
 }
 
 fn checkSignalKAvailable(base: []const u8) bool {
-    const result = getNoToken(base, "/signalk/v1/api/") catch return false;
+    const result = getNoToken(base, "/signalk/v1/api/") catch |err| {
+        log.debug("SignalK probe failed at {s}: {}", .{ base, err });
+        return false;
+    };
     defer allocator.free(result);
+    log.debug("SignalK probe succeeded at {s}", .{base});
     return result.len > 0;
+}
+
+fn discoverSignalKViaSupervisor() ?[]u8 {
+    const body = supervisorGet("/apps") catch {
+        supervisorGet("/addons") catch |err| {
+            log.debug("Supervisor app/add-on query failed: {}", .{err});
+            return null;
+        }
+    };
+    defer allocator.free(body);
+
+    const parsed = std.json.parseFromSlice(std.json.Value, allocator, body, .{}) catch {
+        return null;
+    };
+    defer parsed.deinit();
+
+    if (parsed.value != .object) return null;
+    const data_v = parsed.value.object.get("data") orelse return null;
+    if (data_v != .object) return null;
+    const entries_v = data_v.object.get("apps") orelse data_v.object.get("addons") orelse return null;
+    if (entries_v != .array) return null;
+
+    for (entries_v.array.items) |entry| {
+        if (entry != .object) continue;
+        const slug_v = entry.object.get("slug") orelse continue;
+        if (slug_v != .string) continue;
+        const slug = slug_v.string;
+        if (!std.mem.endsWith(u8, slug, "_signalk")) continue;
+
+        log.debug("Supervisor candidate SignalK slug: {s}", .{slug});
+
+        const info_body = supervisorGetInfoForSlug(slug) catch |err| {
+            log.debug("Supervisor info query failed for {s}: {}", .{ slug, err });
+            continue;
+        };
+        defer allocator.free(info_body);
+
+        const parsed_info = std.json.parseFromSlice(std.json.Value, allocator, info_body, .{}) catch continue;
+        defer parsed_info.deinit();
+        if (parsed_info.value != .object) continue;
+        const info_data_v = parsed_info.value.object.get("data") orelse continue;
+        if (info_data_v != .object) continue;
+
+        const state_v = info_data_v.object.get("state") orelse continue;
+        if (state_v != .string or !std.mem.eql(u8, state_v.string, "started")) continue;
+
+        const ip_v = info_data_v.object.get("ip_address") orelse continue;
+        if (ip_v != .string or ip_v.string.len == 0) continue;
+
+        const network_v = info_data_v.object.get("network") orelse continue;
+        if (network_v != .object) continue;
+        if (network_v.object.get("3000/tcp") == null) continue;
+
+        const base = std.fmt.allocPrint(allocator, "http://{s}:3000", .{ip_v.string}) catch continue;
+        if (!checkSignalKAvailable(base)) {
+            log.debug("Supervisor-derived SignalK URL not reachable: {s}", .{base});
+            allocator.free(base);
+            continue;
+        }
+
+        log.info("SignalK discovered via Supervisor: {s}", .{base});
+        return base;
+    }
+
+    return null;
+}
+
+fn supervisorGetInfoForSlug(slug: []const u8) ![]u8 {
+    const app_path = try std.fmt.allocPrint(allocator, "/apps/{s}/info", .{slug});
+    defer allocator.free(app_path);
+
+    return supervisorGet(app_path) catch {
+        const addon_path = try std.fmt.allocPrint(allocator, "/addons/{s}/info", .{slug});
+        defer allocator.free(addon_path);
+        return supervisorGet(addon_path);
+    };
+}
+
+fn supervisorGet(path: []const u8) ![]u8 {
+    const token = getSupervisorToken() orelse return error.NoSupervisorToken;
+    defer allocator.free(token);
+
+    const bearer = try std.fmt.allocPrint(allocator, "Bearer {s}", .{token});
+    defer allocator.free(bearer);
+
+    return supervisorGetWithHeader(path, "Authorization", bearer) catch |auth_err| {
+        log.debug("Supervisor GET failed with Authorization header: {}", .{auth_err});
+        return supervisorGetWithHeader(path, "X-Supervisor-Token", token);
+    };
+}
+
+fn supervisorGetWithHeader(path: []const u8, header_name: []const u8, header_value: []const u8) ![]u8 {
+    const url = try std.fmt.allocPrint(allocator, "http://supervisor{s}", .{path});
+    defer allocator.free(url);
+
+    const uri = try std.Uri.parse(url);
+    var client = std.http.Client{ .allocator = allocator };
+    defer client.deinit();
+
+    var header_buf: [8192]u8 = undefined;
+    var req = try client.open(.GET, uri, .{
+        .server_header_buffer = &header_buf,
+        .extra_headers = &.{.{ .name = header_name, .value = header_value }},
+    });
+    defer req.deinit();
+
+    try req.send();
+    try req.finish();
+    try req.wait();
+
+    if (req.response.status != .ok) {
+        log.debug(
+            "Supervisor GET {s} via header {s} failed with status {}",
+            .{ path, header_name, req.response.status },
+        );
+        return error.HttpError;
+    }
+
+    var out = std.ArrayList(u8).init(allocator);
+    errdefer out.deinit();
+
+    var buf: [4096]u8 = undefined;
+    while (true) {
+        const n = try req.reader().read(&buf);
+        if (n == 0) break;
+        try out.appendSlice(buf[0..n]);
+    }
+
+    return out.toOwnedSlice();
+}
+
+fn getSupervisorToken() ?[]u8 {
+    persist_mutex.lock();
+    defer persist_mutex.unlock();
+    if (supervisor_token) |v| return allocator.dupe(u8, v) catch null;
+    return null;
 }
 
 fn publishStatus(state: AuthState, msg: []const u8) void {

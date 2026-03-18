@@ -25,12 +25,51 @@ const websocket = @import("websocket.zig");
 const ha_client = @import("ha_client.zig");
 const signalk_client = @import("signalk_client.zig");
 
+var runtime_log_level: std.log.Level = .info;
+var runtime_log_mutex: std.Thread.Mutex = .{};
+
+pub const std_options = struct {
+    pub const log_level = .debug;
+
+    pub fn logFn(
+        comptime message_level: std.log.Level,
+        comptime scope: @Type(.enum_literal),
+        comptime format: []const u8,
+        args: anytype,
+    ) void {
+        if (!shouldLog(message_level)) return;
+
+        const level_text = switch (message_level) {
+            .err => "error",
+            .warn => "warning",
+            .info => "info",
+            .debug => "debug",
+        };
+
+        const scope_text = @tagName(scope);
+
+        var buf: [2048]u8 = undefined;
+        const msg = std.fmt.bufPrint(&buf, format, args) catch "log formatting failed";
+
+        runtime_log_mutex.lock();
+        defer runtime_log_mutex.unlock();
+
+        if (std.mem.eql(u8, scope_text, "default")) {
+            std.debug.print("{s}: {s}\n", .{ level_text, msg });
+        } else {
+            std.debug.print("{s}({s}): {s}\n", .{ level_text, scope_text, msg });
+        }
+    }
+};
+
 /// Server configuration
 pub const Config = struct {
     port: u16 = 8765,
     web_root: []const u8 = "web",
     ha_url: []const u8 = "http://supervisor/core/api",
     supervisor_token: ?[]const u8 = null,
+    signalk_url: ?[]const u8 = null,
+    log_level: std.log.Level = .info,
 };
 
 var config: Config = .{};
@@ -65,18 +104,25 @@ pub fn main() !void {
 
     // Read configuration
     config = readConfig();
+    runtime_log_level = config.log_level;
 
     std.log.info("Raspberry Pi Touchscreen native Dashboard for HAOS server starting on port {d}", .{config.port});
+    std.log.info("Log level set to {s}", .{@tagName(config.log_level)});
     if (config.supervisor_token != null) {
         std.log.info("Home Assistant Supervisor token found", .{});
     } else {
         std.log.warn("No SUPERVISOR_TOKEN — HA API proxy will be unavailable", .{});
+    }
+    if (config.signalk_url) |url| {
+        std.log.info("SignalK URL override configured: {s}", .{url});
     }
 
     // Initialize modules
     websocket.init(allocator);
     routes.init(allocator);
     signalk_client.init(allocator);
+    signalk_client.setBaseUrlOverride(config.signalk_url);
+    signalk_client.setSupervisorToken(config.supervisor_token);
     signalk_client.setBroadcaster(websocket.broadcastRaw);
     ha_client.init(allocator, .{
         .ha_url = config.ha_url,
@@ -236,5 +282,41 @@ fn readConfig() Config {
         cfg.web_root = root;
     } else |_| {}
 
+    // SignalK URL override
+    if (std.process.getEnvVarOwned(std.heap.page_allocator, "SIGNALK_URL")) |url| {
+        if (url.len > 0) {
+            cfg.signalk_url = url;
+        } else {
+            std.heap.page_allocator.free(url);
+        }
+    } else |_| {}
+
+    // Runtime log level
+    if (std.process.getEnvVarOwned(std.heap.page_allocator, "LOG_LEVEL")) |lvl| {
+        cfg.log_level = parseLogLevel(lvl);
+        std.heap.page_allocator.free(lvl);
+    } else |_| {}
+
     return cfg;
+}
+
+fn parseLogLevel(level: []const u8) std.log.Level {
+    if (std.ascii.eqlIgnoreCase(level, "error") or std.ascii.eqlIgnoreCase(level, "err")) return .err;
+    if (std.ascii.eqlIgnoreCase(level, "warning") or std.ascii.eqlIgnoreCase(level, "warn")) return .warn;
+    if (std.ascii.eqlIgnoreCase(level, "info")) return .info;
+    if (std.ascii.eqlIgnoreCase(level, "debug") or std.ascii.eqlIgnoreCase(level, "trace")) return .debug;
+    return .info;
+}
+
+fn shouldLog(level: std.log.Level) bool {
+    return logLevelRank(level) <= logLevelRank(runtime_log_level);
+}
+
+fn logLevelRank(level: std.log.Level) u8 {
+    return switch (level) {
+        .err => 0,
+        .warn => 1,
+        .info => 2,
+        .debug => 3,
+    };
 }
