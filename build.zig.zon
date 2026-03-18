@@ -1,7 +1,6 @@
 .{
     .name = .ha_rpi_touch_dashboard,
     .version = "0.1.0",
-    .fingerprint = 0x718c00a1ff7b5bac,
     .minimum_zig_version = "0.14.1",
     .dependencies = .{
         .lvgl = .{
