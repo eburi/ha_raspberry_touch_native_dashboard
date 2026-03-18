@@ -77,6 +77,33 @@ pub fn stop() void {
     }
 }
 
+/// Release all resources owned by the HA client module.
+/// Must be called after stop() and before the allocator is torn down.
+pub fn deinit() void {
+    // Free cached bulk states JSON
+    {
+        cached_states_mutex.lock();
+        defer cached_states_mutex.unlock();
+        if (cached_states_json) |json| {
+            allocator.free(json);
+            cached_states_json = null;
+        }
+    }
+
+    // Free all entries in the state cache
+    {
+        state_cache_mutex.lock();
+        defer state_cache_mutex.unlock();
+
+        var it = state_cache.iterator();
+        while (it.next()) |entry| {
+            allocator.free(entry.key_ptr.*);
+            allocator.free(entry.value_ptr.*);
+        }
+        state_cache.deinit();
+    }
+}
+
 /// The main connection loop — connects, authenticates, subscribes, and
 /// processes messages. Reconnects on failure with exponential backoff.
 fn haConnectionLoop() void {

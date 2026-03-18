@@ -3,10 +3,11 @@
 
 Reads icon names (one per line) from an icon list file, downloads matching
 Tabler SVG icons, normalizes stroke width, rasterizes them, and generates
-LVGL C assets with three variants per icon:
+LVGL C assets with four variants per icon:
     _S = standard (24 px)
     _P = primary  (32 px)
     _L = large    (48 px)
+    _N = nav      (64 px)
 
 Usage:
     # Using the project venv (recommended):
@@ -21,6 +22,7 @@ Environment overrides:
     SIZE_STANDARD_PX   Standard size in pixels              (default: 24)
     SIZE_PRIMARY_PX    Primary size in pixels               (default: 32)
     SIZE_LARGE_PX      Large size in pixels                 (default: 48)
+    SIZE_NAV_PX        Nav size in pixels                   (default: 64)
     OUT_DIR            Output folder                        (default: src/wasm/generated_icons)
     OUT_BASENAME       Output base name                     (default: tabler_icons)
     TABLER_BASE_URL    Tabler icons base URL
@@ -65,6 +67,7 @@ STROKE_WIDTH = os.environ.get("STROKE_WIDTH", "1.5")
 SIZE_STANDARD_PX = int(os.environ.get("SIZE_STANDARD_PX", "24"))
 SIZE_PRIMARY_PX = int(os.environ.get("SIZE_PRIMARY_PX", "32"))
 SIZE_LARGE_PX = int(os.environ.get("SIZE_LARGE_PX", "48"))
+SIZE_NAV_PX = int(os.environ.get("SIZE_NAV_PX", "64"))
 TABLER_BASE_URL = os.environ.get(
     "TABLER_BASE_URL",
     "https://raw.githubusercontent.com/tabler/tabler-icons/master/icons/outline",
@@ -76,6 +79,7 @@ VARIANTS = [
     ("S", SIZE_STANDARD_PX),
     ("P", SIZE_PRIMARY_PX),
     ("L", SIZE_LARGE_PX),
+    ("N", SIZE_NAV_PX),
 ]
 
 
@@ -119,12 +123,14 @@ def force_stroke_width(svg_text: str, stroke: str) -> bytes:
     return ET.tostring(root, encoding="utf-8", xml_declaration=False)
 
 
-def rgba_to_argb_bytes(img: Image.Image) -> bytes:
+def rgba_to_bgra_bytes(img: Image.Image) -> bytes:
     rgba = img.convert("RGBA").tobytes()
     out = bytearray()
     for i in range(0, len(rgba), 4):
         r, g, b, a = rgba[i : i + 4]
-        out.extend((a, r, g, b))
+        # LVGL's LV_COLOR_FORMAT_ARGB8888 expects 32-bit ARGB values, which are
+        # stored in little-endian byte order in memory (B, G, R, A).
+        out.extend((b, g, r, a))
     return bytes(out)
 
 
@@ -188,7 +194,7 @@ def main() -> None:
                 output_height=size_px,
             )
             image = Image.open(io.BytesIO(png_data)).convert("RGBA")
-            raw_argb = rgba_to_argb_bytes(image)
+            raw_argb = rgba_to_bgra_bytes(image)
 
             dsc_symbol = f"tabler_icon_{c_ident}_{variant_suffix}"
             map_symbol = f"{dsc_symbol}_map"
@@ -360,7 +366,7 @@ def main() -> None:
     print(f"  - {source_path}")
     print(
         f"Icons: {len(icons)} names -> {len(entries)} assets "
-        f"(S={VARIANTS[0][1]}px, P={VARIANTS[1][1]}px, L={VARIANTS[2][1]}px) "
+        f"(S={VARIANTS[0][1]}px, P={VARIANTS[1][1]}px, L={VARIANTS[2][1]}px, N={VARIANTS[3][1]}px) "
         f"| Stroke: {STROKE_WIDTH}"
     )
 

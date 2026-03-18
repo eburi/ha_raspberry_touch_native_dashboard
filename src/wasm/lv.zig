@@ -246,12 +246,15 @@ pub const LV_SYMBOL_RIGHT = c.LV_SYMBOL_RIGHT;
 pub extern const tabler_icon_api_book_S: anyopaque;
 pub extern const tabler_icon_api_book_P: anyopaque;
 pub extern const tabler_icon_api_book_L: anyopaque;
+pub extern const tabler_icon_api_book_N: anyopaque;
 pub extern const tabler_icon_anchor_S: anyopaque;
 pub extern const tabler_icon_anchor_P: anyopaque;
 pub extern const tabler_icon_anchor_L: anyopaque;
+pub extern const tabler_icon_anchor_N: anyopaque;
 pub extern const tabler_icon_sailboat_S: anyopaque;
 pub extern const tabler_icon_sailboat_P: anyopaque;
 pub extern const tabler_icon_sailboat_L: anyopaque;
+pub extern const tabler_icon_sailboat_N: anyopaque;
 
 // --- Palette ---
 pub const LV_PALETTE_BLUE = c.LV_PALETTE_BLUE;

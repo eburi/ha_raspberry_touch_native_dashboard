@@ -17,13 +17,8 @@ test "fbdev deinit is safe when unopened" {
 }
 
 test "fbdev error set includes expected variants" {
-    const open_failed: fbdev.FbdevError = error.OpenFailed;
-    const ioctl_failed: fbdev.FbdevError = error.IoctlFailed;
-    const mmap_failed: fbdev.FbdevError = error.MmapFailed;
-
-    _ = open_failed;
-    _ = ioctl_failed;
-    _ = mmap_failed;
-
-    try std.testing.expect(true);
+    // Verify the error set contains the expected variants by comparing them
+    try std.testing.expectEqual(@as(fbdev.FbdevError, error.OpenFailed), error.OpenFailed);
+    try std.testing.expectEqual(@as(fbdev.FbdevError, error.IoctlFailed), error.IoctlFailed);
+    try std.testing.expectEqual(@as(fbdev.FbdevError, error.MmapFailed), error.MmapFailed);
 }
