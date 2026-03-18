@@ -36,5 +36,5 @@ jobs:
         uses: home-assistant/builder@2026.02.1
         with:
           args: |
-            --amd64 --aarch64 \
+            --aarch64 \
             --target ha_raspberry_touch_native_dashboard
