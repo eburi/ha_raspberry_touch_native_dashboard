@@ -1,5 +1,5 @@
 .{
-    .name = .ha_rpi_touch_dashboard,
+    .name = .ha_app_lvgl_dashboard,
     .version = "0.1.0",
     .minimum_zig_version = "0.14.1",
     .dependencies = .{
@@ -20,3 +20,4 @@
         "lv_conf.h",
     },
 }
+    .fingerprint = 0x718c00a1ff7b5bac,
