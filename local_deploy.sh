@@ -19,6 +19,9 @@ SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
 PROJECT_DIR="$SCRIPT_DIR"
 BUILD_DIR="/tmp/${APP_NAME}_app"
 
+# Add project-local zig to PATH (installed under .local/bin)
+export PATH="$PROJECT_DIR/.local/bin:$PATH"
+
 echo "=== Deploying $APP_NAME to $TARGET ==="
 echo "Project dir: $PROJECT_DIR"
 echo ""

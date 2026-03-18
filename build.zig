@@ -107,12 +107,10 @@ pub fn build(b: *std.Build) !void {
         },
     });
 
-    // Add custom font C files (FontAwesome 6 icons converted via lv_font_conv)
+    // Add generated Tabler icon C assets (rasterized SVG -> LVGL image descriptors)
     wasm_lib.addCSourceFiles(.{
         .files = &.{
-            "src/wasm/fa_icons_28.c",
-            "src/wasm/fa_icons_20.c",
-            // "src/wasm/generated_icons/tabler_icons.c",
+            "src/wasm/generated_icons/tabler_icons.c",
         },
         .flags = &.{
             "-DLV_LVGL_H_INCLUDE_SIMPLE=1",
@@ -122,6 +120,9 @@ pub fn build(b: *std.Build) !void {
             "-D__wasm__",
         },
     });
+
+    // Add generated_icons include path so tabler_icons.c can find tabler_icons.h
+    wasm_lib.addIncludePath(b.path("src/wasm/generated_icons"));
 
     // Install the WASM binary
     const install_wasm = b.addInstallArtifact(wasm_lib, .{});

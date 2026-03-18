@@ -168,19 +168,21 @@ fn createNavBar(parent: ?*lv.lv_obj_t) void {
     }
 }
 
-fn navIconForPage(page_index: usize) [*:0]const u8 {
+fn navIconForPage(page_index: usize) *const anyopaque {
     return switch (page_index) {
-        PAGE_LOGBOOK => lv.FA_BOOK,
-        PAGE_ANCHOR => lv.FA_ANCHOR,
-        PAGE_SAILS => lv.FA_SAILBOAT,
+        PAGE_LOGBOOK => &lv.tabler_icon_api_book_P,
+        PAGE_ANCHOR => &lv.tabler_icon_anchor_P,
+        PAGE_SAILS => &lv.tabler_icon_sailboat_P,
+        else => &lv.tabler_icon_api_book_P,
     };
 }
 
-fn titleIconForPage(page_index: usize) [*:0]const u8 {
+fn titleIconForPage(page_index: usize) *const anyopaque {
     return switch (page_index) {
-        PAGE_LOGBOOK => lv.FA_BOOK,
-        PAGE_ANCHOR => lv.FA_ANCHOR,
-        PAGE_SAILS => lv.FA_SAILBOAT,
+        PAGE_LOGBOOK => &lv.tabler_icon_api_book_S,
+        PAGE_ANCHOR => &lv.tabler_icon_anchor_S,
+        PAGE_SAILS => &lv.tabler_icon_sailboat_S,
+        else => &lv.tabler_icon_api_book_S,
     };
 }
 
@@ -198,13 +200,13 @@ fn createNavButton(parent: ?*lv.lv_obj_t, page_index: usize) ?*lv.lv_obj_t {
     lv.lv_obj_set_style_border_width(btn, 0, lv.LV_PART_MAIN);
     lv.lv_obj_set_style_shadow_width(btn, 0, lv.LV_PART_MAIN);
 
-    const icon = navIconForPage(page_index);
-    const lbl = lv.lv_label_create(btn);
-    if (lbl) |label| {
-        lv.lv_label_set_text(label, icon);
-        lv.lv_obj_set_style_text_color(label, lv.lv_color_hex(COL_TEXT_DIM), lv.LV_PART_MAIN);
-        lv.lv_obj_set_style_text_font(label, lv.fa_icons_28, lv.LV_PART_MAIN);
-        lv.lv_obj_center(label);
+    const icon_dsc = navIconForPage(page_index);
+    const img = lv.lv_image_create(btn);
+    if (img) |image| {
+        lv.lv_image_set_src(image, icon_dsc);
+        lv.lv_obj_set_style_image_recolor(image, lv.lv_color_hex(COL_TEXT_DIM), lv.LV_PART_MAIN);
+        lv.lv_obj_set_style_image_recolor_opa(image, lv.LV_OPA_COVER, lv.LV_PART_MAIN);
+        lv.lv_obj_center(image);
     }
 
     // Store page index as user_data for the click handler
@@ -242,18 +244,18 @@ fn showPage(index: usize) void {
     // Update nav button highlight
     for (0..PAGE_COUNT) |i| {
         if (nav_buttons[i]) |btn| {
-            // Get the label child (first child of button)
+            // Get the image child (first child of button)
             const child = lv.c.lv_obj_get_child(btn, 0);
-            if (child) |lbl| {
+            if (child) |img| {
                 if (i == index) {
                     // Active: bright foreground color + accent background
-                    lv.lv_obj_set_style_image_recolor(lbl, lv.lv_color_hex(COL_FG), lv.LV_PART_MAIN);
-                    lv.lv_obj_set_style_image_recolor_opa(lbl, lv.LV_OPA_COVER, lv.LV_PART_MAIN);
+                    lv.lv_obj_set_style_image_recolor(img, lv.lv_color_hex(COL_FG), lv.LV_PART_MAIN);
+                    lv.lv_obj_set_style_image_recolor_opa(img, lv.LV_OPA_COVER, lv.LV_PART_MAIN);
                     lv.lv_obj_set_style_bg_color(btn, lv.lv_color_hex(COL_ACCENT_1), lv.LV_PART_MAIN);
                 } else {
                     // Inactive: dim
-                    lv.lv_obj_set_style_image_recolor(lbl, lv.lv_color_hex(COL_TEXT_DIM), lv.LV_PART_MAIN);
-                    lv.lv_obj_set_style_image_recolor_opa(lbl, lv.LV_OPA_COVER, lv.LV_PART_MAIN);
+                    lv.lv_obj_set_style_image_recolor(img, lv.lv_color_hex(COL_TEXT_DIM), lv.LV_PART_MAIN);
+                    lv.lv_obj_set_style_image_recolor_opa(img, lv.LV_OPA_COVER, lv.LV_PART_MAIN);
                     lv.lv_obj_set_style_bg_color(btn, lv.lv_color_hex(COL_NAV_BG), lv.LV_PART_MAIN);
                 }
             }
@@ -302,15 +304,13 @@ fn createPages(parent: ?*lv.lv_obj_t) void {
 fn createPageTitle(parent: ?*lv.lv_obj_t, text: [*:0]const u8, page_index: usize) void {
     if (parent == null) return;
 
-    const icon_src = titleIconForPage(page_index);
-    if (icon_src != null) {
-        const img = lv.lv_image_create(parent);
-        if (img) |im| {
-            lv.lv_image_set_src(im, icon_src);
-            lv.lv_obj_set_style_image_recolor(im, lv.lv_color_hex(COL_ACCENT_2), lv.LV_PART_MAIN);
-            lv.lv_obj_set_style_image_recolor_opa(im, lv.LV_OPA_COVER, lv.LV_PART_MAIN);
-            lv.lv_obj_align(im, lv.LV_ALIGN_TOP_RIGHT, -8, 4);
-        }
+    const icon_dsc = titleIconForPage(page_index);
+    const img = lv.lv_image_create(parent);
+    if (img) |im| {
+        lv.lv_image_set_src(im, icon_dsc);
+        lv.lv_obj_set_style_image_recolor(im, lv.lv_color_hex(COL_ACCENT_2), lv.LV_PART_MAIN);
+        lv.lv_obj_set_style_image_recolor_opa(im, lv.LV_OPA_COVER, lv.LV_PART_MAIN);
+        lv.lv_obj_align(im, lv.LV_ALIGN_TOP_RIGHT, -8, 4);
     }
 
     const lbl = lv.lv_label_create(parent);

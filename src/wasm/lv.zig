@@ -238,64 +238,20 @@ pub const LV_SYMBOL_DOWN = c.LV_SYMBOL_DOWN;
 pub const LV_SYMBOL_LEFT = c.LV_SYMBOL_LEFT;
 pub const LV_SYMBOL_RIGHT = c.LV_SYMBOL_RIGHT;
 
-// --- Custom FontAwesome 6 icon fonts (generated via lv_font_conv) ---
-pub extern const fa_icons_28: lv_font_t;
-pub extern const fa_icons_20: lv_font_t;
-
-// --- Generated Tabler icon assets ---
-pub extern const tabler_icon_api_book_S: [*]const u8;
-pub extern const tabler_icon_api_book_P: [*]const u8;
-pub extern const tabler_icon_api_book_L: [*]const u8;
-pub extern const tabler_icon_anchor_S: [*]const u8;
-pub extern const tabler_icon_anchor_P: [*]const u8;
-pub extern const tabler_icon_anchor_L: [*]const u8;
-pub extern const tabler_icon_sailboat_S: [*]const u8;
-pub extern const tabler_icon_sailboat_P: [*]const u8;
-pub extern const tabler_icon_sailboat_L: [*]const u8;
-
-// Icon pointer arrays for navigation and title icons
-pub const tabler_icon_icons_ptrs: [3][*]const u8 = .{
-    tabler_icon_api_book_P,
-    tabler_icon_anchor_P,
-    tabler_icon_sailboat_P,
-};
-pub const tabler_icon_title_icons_ptrs: [3][*]const u8 = .{
-    tabler_icon_api_book_S,
-    tabler_icon_anchor_S,
-    tabler_icon_sailboat_S,
-};
-
-// FontAwesome 6 icon codepoints (UTF-8 encoded strings for LVGL labels)
-// Nav icons
-pub const FA_BOOK = "\xef\x80\xad"; // U+F02D book (Logbook)
-pub const FA_ANCHOR = "\xef\x84\xbd"; // U+F13D anchor (Anchor Alarm)
-pub const FA_SAILBOAT = "\xef\x9b\xbc"; // U+F6FC sailboat (Sails)
-// Sailing / weather
-pub const FA_WIND = "\xef\x9c\xae"; // U+F72E wind
-pub const FA_CLOUD = "\xef\x83\x82"; // U+F0C2 cloud
-pub const FA_WATER = "\xef\x96\xa0"; // U+F5A0 water/waves
-pub const FA_SHIP = "\xef\x88\x9a"; // U+F21A ship
-pub const FA_GAUGE = "\xef\x80\xa3"; // U+F023 gauge
-// General
-pub const FA_LOCATION_ARROW = "\xef\x84\xa4"; // U+F124 location-arrow
-pub const FA_LOCATION_DOT = "\xef\x8f\x85"; // U+F3C5 location-dot
-pub const FA_WARNING = "\xef\x81\xb1"; // U+F071 triangle-exclamation
-pub const FA_HOME = "\xef\x80\x95"; // U+F015 home
-pub const FA_COG = "\xef\x80\x93"; // U+F013 cog/settings
-pub const FA_CHECK = "\xef\x80\x8c"; // U+F00C check
-pub const FA_XMARK = "\xef\x80\x8d"; // U+F00D xmark/close
-pub const FA_REFRESH = "\xef\x80\xa1"; // U+F021 arrows-rotate
-pub const FA_BELL = "\xef\x83\xb3"; // U+F0F3 bell
-pub const FA_ARROW_UP = "\xef\x81\xa2"; // U+F062 arrow-up
-pub const FA_ARROW_DOWN = "\xef\x81\xa3"; // U+F063 arrow-down
-pub const FA_ARROW_LEFT = "\xef\x81\xa0"; // U+F060 arrow-left
-pub const FA_ARROW_RIGHT = "\xef\x81\xa1"; // U+F061 arrow-right
-pub const FA_CLOCK = "\xef\x80\x97"; // U+F017 clock
-pub const FA_BOLT = "\xef\x88\x85"; // U+F205 bolt
-pub const FA_THERMOMETER = "\xef\x8b\x89"; // U+F2C9 thermometer-half
-pub const FA_DROPLET = "\xef\x81\x83"; // U+F043 droplet
-pub const FA_ANCHOR_CHECK = "\xee\x93\xa6"; // U+E4E6 anchor-circle-check
-pub const FA_GLOBE = "\xef\x82\xac"; // U+F0AC globe
+// --- Generated Tabler icon image descriptors (from tools/install_icons.py) ---
+// These are lv_image_dsc_t structs defined in generated_icons/tabler_icons.c.
+// The C type uses bitfields which makes it opaque to Zig's @cImport.
+// We declare them as extern anyopaque and pass their address (&icon) to
+// lv_image_set_src(), which expects a const void* anyway.
+pub extern const tabler_icon_api_book_S: anyopaque;
+pub extern const tabler_icon_api_book_P: anyopaque;
+pub extern const tabler_icon_api_book_L: anyopaque;
+pub extern const tabler_icon_anchor_S: anyopaque;
+pub extern const tabler_icon_anchor_P: anyopaque;
+pub extern const tabler_icon_anchor_L: anyopaque;
+pub extern const tabler_icon_sailboat_S: anyopaque;
+pub extern const tabler_icon_sailboat_P: anyopaque;
+pub extern const tabler_icon_sailboat_L: anyopaque;
 
 // --- Palette ---
 pub const LV_PALETTE_BLUE = c.LV_PALETTE_BLUE;

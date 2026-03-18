@@ -1,6 +1,6 @@
 # One Tabler icon name per line.
 # Add/remove icons, then run:
-#   tools/install_icons.sh icons_list.txt
+#   .venv/bin/python tools/install_icons.py icons_list.txt
 
 api-book
 anchor
