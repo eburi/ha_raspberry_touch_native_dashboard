@@ -131,13 +131,13 @@ Minimal lv_conf.h with only the features needed:
 │   ├── index.html               # Canvas shell
 │   ├── main.js                  # WASM loader, rAF loop, input, WS
 │   └── style.css                # Dark theme, centered canvas
-├── ha_app/
+├── lvgl_dashboard/
 │   ├── config.yaml              # HA App manifest
 │   ├── build.yaml               # Build config
 │   ├── Dockerfile               # Multi-stage: Zig builder → Alpine
 │   ├── apparmor.txt             # AppArmor security profile
 │   ├── rootfs/etc/services.d/   # S6 service scripts
 │   └── translations/en.yaml    # UI strings
-├── scripts/deploy.sh            # rsync + ha addons reload
+├── deploy.sh                    # assembles app bundle and copies to HA host
 └── DESIGN.md                    # This file
 ```

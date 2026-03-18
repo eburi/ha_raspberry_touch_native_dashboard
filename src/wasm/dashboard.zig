@@ -195,7 +195,7 @@ fn createNavButton(parent: ?*lv.lv_obj_t, icon: [*:0]const u8, page_index: usize
     const label = lv.lv_label_create(btn);
     if (label) |lbl| {
         lv.lv_label_set_text(lbl, icon);
-        lv.lv_obj_set_style_text_font(lbl, lv.fa_icons_28, lv.LV_PART_MAIN);
+        lv.lv_obj_set_style_text_font(lbl, &lv.fa_icons_28, lv.LV_PART_MAIN);
         lv.lv_obj_set_style_text_color(lbl, lv.lv_color_hex(COL_TEXT_DIM), lv.LV_PART_MAIN);
         lv.lv_obj_center(lbl);
     }

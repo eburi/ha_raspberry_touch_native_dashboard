@@ -7,3 +7,8 @@ web/dashboard.wasm
 
 # OS
 .DS_Store
+.local
+
+# Python virtual environments
+.venv/
+venv/

@@ -41,4 +41,4 @@ COPY run.sh /app/run.sh
 RUN chmod +x /app/run.sh
 
 WORKDIR /app
-CMD ["/app/run.sh"]
+CMD ["/usr/bin/with-contenv", "/app/run.sh"]

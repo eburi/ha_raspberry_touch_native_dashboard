@@ -233,8 +233,8 @@ pub const LV_SYMBOL_LEFT = c.LV_SYMBOL_LEFT;
 pub const LV_SYMBOL_RIGHT = c.LV_SYMBOL_RIGHT;
 
 // --- Custom FontAwesome 6 icon fonts (generated via lv_font_conv) ---
-pub const fa_icons_28 = @extern(*const lv_font_t, .{ .name = "fa_icons_28" });
-pub const fa_icons_20 = @extern(*const lv_font_t, .{ .name = "fa_icons_20" });
+extern const fa_icons_28: lv_font_t;
+extern const fa_icons_20: lv_font_t;
 
 // FontAwesome 6 icon codepoints (UTF-8 encoded strings for LVGL labels)
 // Nav icons
