@@ -63,10 +63,65 @@ var page_containers: [PAGE_COUNT]?*lv.lv_obj_t = .{ null, null, null };
 var nav_buttons: [PAGE_COUNT]?*lv.lv_obj_t = .{ null, null, null };
 
 // --- Logbook page sensor labels (updated via WASM export) ---
+const SENSOR_ID_LATITUDE: i32 = 0;
+const SENSOR_ID_LONGITUDE: i32 = 1;
+const SENSOR_ID_LOG: i32 = 2;
+const SENSOR_ID_HDG: i32 = 3;
+const SENSOR_ID_STW: i32 = 4;
+const SENSOR_ID_SOG: i32 = 5;
+const SENSOR_ID_COG: i32 = 6;
+const SENSOR_ID_AWS: i32 = 7;
+const SENSOR_ID_AWA: i32 = 8;
+const SENSOR_ID_TWS: i32 = 9;
+const SENSOR_ID_TWD: i32 = 10;
+const SENSOR_ID_BARO: i32 = 11;
+const SENSOR_ID_DISTANCE_24H: i32 = 12;
+const SENSOR_ID_SPEED_24H: i32 = 13;
+const SENSOR_ID_DATETIME: i32 = 14;
+
+var lbl_logbook_datetime: ?*lv.lv_obj_t = null;
 var lbl_latitude: ?*lv.lv_obj_t = null;
 var lbl_longitude: ?*lv.lv_obj_t = null;
+var lbl_vessel_log: ?*lv.lv_obj_t = null;
+var lbl_vessel_hdg: ?*lv.lv_obj_t = null;
+var lbl_vessel_stw: ?*lv.lv_obj_t = null;
+var lbl_vessel_sog: ?*lv.lv_obj_t = null;
+var lbl_vessel_cog: ?*lv.lv_obj_t = null;
+var lbl_env_aws: ?*lv.lv_obj_t = null;
+var lbl_env_awa: ?*lv.lv_obj_t = null;
+var lbl_env_tws: ?*lv.lv_obj_t = null;
+var lbl_env_twd: ?*lv.lv_obj_t = null;
+var lbl_env_baro: ?*lv.lv_obj_t = null;
 var lbl_distance_24h: ?*lv.lv_obj_t = null;
 var lbl_speed_24h: ?*lv.lv_obj_t = null;
+
+// --- Anchor page objects ---
+const ANCHOR_TRACK_POINTS = 48;
+const ANCHOR_LINE_POINTS = 40;
+const ANCHOR_MAX_OTHER = 6;
+const ANCHOR_OTHER_TRACK_POINTS = 20;
+
+var anchor_root: ?*lv.lv_obj_t = null;
+var anchor_map: ?*lv.lv_obj_t = null;
+var anchor_ring: ?*lv.lv_obj_t = null;
+var anchor_icon: ?*lv.lv_obj_t = null;
+var anchor_boat: ?*lv.lv_obj_t = null;
+var anchor_status: ?*lv.lv_obj_t = null;
+var anchor_info: ?*lv.lv_obj_t = null;
+var anchor_zoom_lbl: ?*lv.lv_obj_t = null;
+var anchor_action_btn_label: ?*lv.lv_obj_t = null;
+var anchor_is_set: bool = false;
+
+var anchor_line_dots: [ANCHOR_LINE_POINTS]?*lv.lv_obj_t = .{null} ** ANCHOR_LINE_POINTS;
+var anchor_track_dots: [ANCHOR_TRACK_POINTS]?*lv.lv_obj_t = .{null} ** ANCHOR_TRACK_POINTS;
+var anchor_other_boats: [ANCHOR_MAX_OTHER]?*lv.lv_obj_t = .{null} ** ANCHOR_MAX_OTHER;
+var anchor_other_tracks: [ANCHOR_MAX_OTHER][ANCHOR_OTHER_TRACK_POINTS]?*lv.lv_obj_t = [_][ANCHOR_OTHER_TRACK_POINTS]?*lv.lv_obj_t{.{null} ** ANCHOR_OTHER_TRACK_POINTS} ** ANCHOR_MAX_OTHER;
+
+const ANCHOR_ACTION_RADIUS_DEC = "radius_dec";
+const ANCHOR_ACTION_RADIUS_INC = "radius_inc";
+const ANCHOR_ACTION_DROP_RAISE = "drop_or_raise";
+const ANCHOR_ACTION_ZOOM_DEC = "zoom_dec";
+const ANCHOR_ACTION_ZOOM_INC = "zoom_inc";
 
 // --- Sails page button references ---
 const SAIL_MAIN_OPTIONS = 5;
@@ -100,6 +155,7 @@ var code0_active: bool = false;
 // js_sail_config_changed: passes entity_id string ptr/len + option value string ptr/len
 extern fn js_sail_config_changed(entity_ptr: [*]const u8, entity_len: i32, option_ptr: [*]const u8, option_len: i32) void;
 extern fn js_sail_toggle_changed(entity_ptr: [*]const u8, entity_len: i32, state: i32) void;
+extern fn js_anchor_action(action_ptr: [*]const u8, action_len: i32, value: f64) void;
 
 // HA entity IDs (null-terminated for convenience, length excludes sentinel)
 const HA_ENTITY_SAIL_MAIN = "input_select.sail_configuration_main";
@@ -170,19 +226,19 @@ fn createNavBar(parent: ?*lv.lv_obj_t) void {
 
 fn navIconForPage(page_index: usize) *const anyopaque {
     return switch (page_index) {
-        PAGE_LOGBOOK => &lv.tabler_icon_api_book_P,
-        PAGE_ANCHOR => &lv.tabler_icon_anchor_P,
-        PAGE_SAILS => &lv.tabler_icon_sailboat_P,
-        else => &lv.tabler_icon_api_book_P,
+        PAGE_LOGBOOK => &lv.tabler_icon_api_book_N,
+        PAGE_ANCHOR => &lv.tabler_icon_anchor_N,
+        PAGE_SAILS => &lv.tabler_icon_sailboat_N,
+        else => &lv.tabler_icon_api_book_N,
     };
 }
 
 fn titleIconForPage(page_index: usize) *const anyopaque {
     return switch (page_index) {
-        PAGE_LOGBOOK => &lv.tabler_icon_api_book_S,
-        PAGE_ANCHOR => &lv.tabler_icon_anchor_S,
-        PAGE_SAILS => &lv.tabler_icon_sailboat_S,
-        else => &lv.tabler_icon_api_book_S,
+        PAGE_LOGBOOK => &lv.tabler_icon_api_book_P,
+        PAGE_ANCHOR => &lv.tabler_icon_anchor_P,
+        PAGE_SAILS => &lv.tabler_icon_sailboat_P,
+        else => &lv.tabler_icon_api_book_P,
     };
 }
 
@@ -304,21 +360,33 @@ fn createPages(parent: ?*lv.lv_obj_t) void {
 fn createPageTitle(parent: ?*lv.lv_obj_t, text: [*:0]const u8, page_index: usize) void {
     if (parent == null) return;
 
+    // Row container: icon on left, title label on right
+    const row = lv.lv_obj_create(parent);
+    if (row == null) return;
+
+    lv.lv_obj_set_size(row, lv.LV_SIZE_CONTENT, lv.LV_SIZE_CONTENT);
+    lv.lv_obj_align(row, lv.LV_ALIGN_TOP_LEFT, 0, 0);
+    lv.lv_obj_set_style_bg_opa(row, lv.LV_OPA_TRANSP, lv.LV_PART_MAIN);
+    lv.lv_obj_set_style_border_width(row, 0, lv.LV_PART_MAIN);
+    lv.lv_obj_set_style_pad_all(row, 0, lv.LV_PART_MAIN);
+    lv.lv_obj_set_style_pad_column(row, 10, lv.LV_PART_MAIN);
+    lv.lv_obj_set_flex_flow(row, lv.LV_FLEX_FLOW_ROW);
+    lv.lv_obj_set_flex_align(row, lv.LV_FLEX_ALIGN_START, lv.LV_FLEX_ALIGN_CENTER, lv.LV_FLEX_ALIGN_CENTER);
+    lv.lv_obj_remove_flag(row, lv.LV_OBJ_FLAG_SCROLLABLE);
+
     const icon_dsc = titleIconForPage(page_index);
-    const img = lv.lv_image_create(parent);
+    const img = lv.lv_image_create(row);
     if (img) |im| {
         lv.lv_image_set_src(im, icon_dsc);
         lv.lv_obj_set_style_image_recolor(im, lv.lv_color_hex(COL_ACCENT_2), lv.LV_PART_MAIN);
         lv.lv_obj_set_style_image_recolor_opa(im, lv.LV_OPA_COVER, lv.LV_PART_MAIN);
-        lv.lv_obj_align(im, lv.LV_ALIGN_TOP_RIGHT, -8, 4);
     }
 
-    const lbl = lv.lv_label_create(parent);
+    const lbl = lv.lv_label_create(row);
     if (lbl) |l| {
         lv.lv_label_set_text(l, text);
         lv.lv_obj_set_style_text_color(l, lv.lv_color_hex(COL_FG), lv.LV_PART_MAIN);
         lv.lv_obj_set_style_text_font(l, lv.lv_font_montserrat_28, lv.LV_PART_MAIN);
-        lv.lv_obj_align(l, lv.LV_ALIGN_TOP_LEFT, 0, 0);
     }
 }
 
@@ -373,6 +441,96 @@ fn createSensorCard(
     return null;
 }
 
+const GpsCardLabels = struct {
+    latitude: ?*lv.lv_obj_t,
+    longitude: ?*lv.lv_obj_t,
+};
+
+fn createGpsCard(parent: ?*lv.lv_obj_t, card_w: i32, card_h: i32, title: [*:0]const u8) GpsCardLabels {
+    if (parent == null) return .{ .latitude = null, .longitude = null };
+
+    const card = lv.lv_obj_create(parent);
+    if (card == null) return .{ .latitude = null, .longitude = null };
+
+    lv.lv_obj_set_size(card, card_w, card_h);
+    lv.lv_obj_set_style_bg_color(card, lv.lv_color_hex(COL_CARD_BG), lv.LV_PART_MAIN);
+    lv.lv_obj_set_style_bg_opa(card, lv.LV_OPA_COVER, lv.LV_PART_MAIN);
+    lv.lv_obj_set_style_radius(card, 12, lv.LV_PART_MAIN);
+    lv.lv_obj_set_style_border_width(card, 1, lv.LV_PART_MAIN);
+    lv.lv_obj_set_style_border_color(card, lv.lv_color_hex(COL_CARD_BORDER), lv.LV_PART_MAIN);
+    lv.lv_obj_set_style_pad_all(card, 14, lv.LV_PART_MAIN);
+    lv.lv_obj_remove_flag(card, lv.LV_OBJ_FLAG_SCROLLABLE);
+    lv.lv_obj_set_flex_flow(card, lv.LV_FLEX_FLOW_COLUMN);
+    lv.lv_obj_set_style_pad_row(card, 6, lv.LV_PART_MAIN);
+
+    const title_lbl = lv.lv_label_create(card);
+    if (title_lbl) |tl| {
+        lv.lv_label_set_text(tl, title);
+        lv.lv_obj_set_style_text_color(tl, lv.lv_color_hex(COL_TEXT_DIM), lv.LV_PART_MAIN);
+        lv.lv_obj_set_style_text_font(tl, lv.lv_font_montserrat_14, lv.LV_PART_MAIN);
+    }
+
+    var out = GpsCardLabels{ .latitude = null, .longitude = null };
+
+    const lat_row = lv.lv_obj_create(card);
+    if (lat_row) |row| {
+        lv.lv_obj_set_size(row, lv.LV_PCT(100), lv.LV_SIZE_CONTENT);
+        lv.lv_obj_set_style_bg_opa(row, lv.LV_OPA_TRANSP, lv.LV_PART_MAIN);
+        lv.lv_obj_set_style_border_width(row, 0, lv.LV_PART_MAIN);
+        lv.lv_obj_set_style_pad_all(row, 0, lv.LV_PART_MAIN);
+        lv.lv_obj_set_style_pad_column(row, 8, lv.LV_PART_MAIN);
+        lv.lv_obj_set_flex_flow(row, lv.LV_FLEX_FLOW_ROW);
+        lv.lv_obj_set_flex_align(row, lv.LV_FLEX_ALIGN_START, lv.LV_FLEX_ALIGN_CENTER, lv.LV_FLEX_ALIGN_CENTER);
+        lv.lv_obj_remove_flag(row, lv.LV_OBJ_FLAG_SCROLLABLE);
+
+        const lat_key = lv.lv_label_create(row);
+        if (lat_key) |lk| {
+            lv.lv_label_set_text(lk, "Lat");
+            lv.lv_obj_set_width(lk, 34);
+            lv.lv_obj_set_style_text_color(lk, lv.lv_color_hex(COL_TEXT_DIM), lv.LV_PART_MAIN);
+            lv.lv_obj_set_style_text_font(lk, lv.lv_font_montserrat_14, lv.LV_PART_MAIN);
+        }
+
+        const lat_val = lv.lv_label_create(row);
+        if (lat_val) |lvv| {
+            lv.lv_label_set_text(lvv, "--");
+            lv.lv_obj_set_style_text_color(lvv, lv.lv_color_hex(COL_FG), lv.LV_PART_MAIN);
+            lv.lv_obj_set_style_text_font(lvv, lv.lv_font_montserrat_20, lv.LV_PART_MAIN);
+            out.latitude = lvv;
+        }
+    }
+
+    const lon_row = lv.lv_obj_create(card);
+    if (lon_row) |row| {
+        lv.lv_obj_set_size(row, lv.LV_PCT(100), lv.LV_SIZE_CONTENT);
+        lv.lv_obj_set_style_bg_opa(row, lv.LV_OPA_TRANSP, lv.LV_PART_MAIN);
+        lv.lv_obj_set_style_border_width(row, 0, lv.LV_PART_MAIN);
+        lv.lv_obj_set_style_pad_all(row, 0, lv.LV_PART_MAIN);
+        lv.lv_obj_set_style_pad_column(row, 8, lv.LV_PART_MAIN);
+        lv.lv_obj_set_flex_flow(row, lv.LV_FLEX_FLOW_ROW);
+        lv.lv_obj_set_flex_align(row, lv.LV_FLEX_ALIGN_START, lv.LV_FLEX_ALIGN_CENTER, lv.LV_FLEX_ALIGN_CENTER);
+        lv.lv_obj_remove_flag(row, lv.LV_OBJ_FLAG_SCROLLABLE);
+
+        const lon_key = lv.lv_label_create(row);
+        if (lon_key) |lk| {
+            lv.lv_label_set_text(lk, "Lon");
+            lv.lv_obj_set_width(lk, 34);
+            lv.lv_obj_set_style_text_color(lk, lv.lv_color_hex(COL_TEXT_DIM), lv.LV_PART_MAIN);
+            lv.lv_obj_set_style_text_font(lk, lv.lv_font_montserrat_14, lv.LV_PART_MAIN);
+        }
+
+        const lon_val = lv.lv_label_create(row);
+        if (lon_val) |lvv| {
+            lv.lv_label_set_text(lvv, "--");
+            lv.lv_obj_set_style_text_color(lvv, lv.lv_color_hex(COL_FG), lv.LV_PART_MAIN);
+            lv.lv_obj_set_style_text_font(lvv, lv.lv_font_montserrat_20, lv.LV_PART_MAIN);
+            out.longitude = lvv;
+        }
+    }
+
+    return out;
+}
+
 // ============================================================
 // Page 0: Logbook
 // ============================================================
@@ -382,62 +540,100 @@ fn createLogbookPage(parent: ?*lv.lv_obj_t) void {
 
     createPageTitle(parent, "Logbook", PAGE_LOGBOOK);
 
+    lbl_logbook_datetime = lv.lv_label_create(parent);
+    if (lbl_logbook_datetime) |dt| {
+        lv.lv_label_set_text(dt, "--:-- --.--.---- (UTC+0)");
+        lv.lv_obj_set_style_text_color(dt, lv.lv_color_hex(COL_FG), lv.LV_PART_MAIN);
+        lv.lv_obj_set_style_text_font(dt, lv.lv_font_montserrat_16, lv.LV_PART_MAIN);
+        lv.lv_obj_align(dt, lv.LV_ALIGN_TOP_RIGHT, -2, 4);
+    }
+
     // Content area below title
     const content = lv.lv_obj_create(parent);
     if (content == null) return;
 
     const content_w = page_w - 40; // account for page padding
-    lv.lv_obj_set_size(content, @intCast(content_w), @intCast(screen_h - 90));
+    const content_w_i32: i32 = @intCast(content_w);
+    lv.lv_obj_set_size(content, content_w_i32, @intCast(screen_h - 90));
     lv.lv_obj_align(content, lv.LV_ALIGN_TOP_LEFT, 0, PAGE_TITLE_H);
     lv.lv_obj_set_style_bg_opa(content, lv.LV_OPA_TRANSP, lv.LV_PART_MAIN);
     lv.lv_obj_set_style_border_width(content, 0, lv.LV_PART_MAIN);
     lv.lv_obj_set_style_pad_all(content, 0, lv.LV_PART_MAIN);
     lv.lv_obj_remove_flag(content, lv.LV_OBJ_FLAG_SCROLLABLE);
 
-    // --- Row 1: Position section ---
+    // --- Row 1: Vessel section ---
     const section_label_1 = lv.lv_label_create(content);
     if (section_label_1) |sl| {
-        lv.lv_label_set_text(sl, "Position");
+        lv.lv_label_set_text(sl, "Vessel");
         lv.lv_obj_set_style_text_color(sl, lv.lv_color_hex(COL_ACCENT_2), lv.LV_PART_MAIN);
         lv.lv_obj_set_style_text_font(sl, lv.lv_font_montserrat_16, lv.LV_PART_MAIN);
         lv.lv_obj_align(sl, lv.LV_ALIGN_TOP_LEFT, 0, 0);
     }
 
-    const row1 = createCardRow(content, 30);
-    const card_w: i32 = @intCast((content_w - 30) / 2); // two cards per row with gap
+    const vessel_gap: i32 = 10;
+    const vessel_cols: i32 = 6;
+    const vessel_card_w: i32 = @divTrunc(content_w_i32 - vessel_gap * (vessel_cols - 1), vessel_cols);
     const card_h: i32 = 110;
+    const row1 = createCardRow(content, 30, 120, vessel_gap);
 
-    lbl_latitude = createSensorCard(row1, card_w, card_h, "Latitude", "--");
-    lbl_longitude = createSensorCard(row1, card_w, card_h, "Longitude", "--");
+    const gps = createGpsCard(row1, vessel_card_w, card_h, "GPS Position");
+    lbl_latitude = gps.latitude;
+    lbl_longitude = gps.longitude;
+    lbl_vessel_log = createSensorCard(row1, vessel_card_w, card_h, "Log", "--");
+    lbl_vessel_hdg = createSensorCard(row1, vessel_card_w, card_h, "HDG", "--");
+    lbl_vessel_stw = createSensorCard(row1, vessel_card_w, card_h, "STW", "--");
+    lbl_vessel_sog = createSensorCard(row1, vessel_card_w, card_h, "SOG", "--");
+    lbl_vessel_cog = createSensorCard(row1, vessel_card_w, card_h, "COG", "--");
 
-    // --- Row 2: Last 24h section ---
+    // --- Row 2: Environment section ---
     const section_label_2 = lv.lv_label_create(content);
     if (section_label_2) |sl| {
-        lv.lv_label_set_text(sl, "Last 24h");
+        lv.lv_label_set_text(sl, "Environment");
         lv.lv_obj_set_style_text_color(sl, lv.lv_color_hex(COL_ACCENT_2), lv.LV_PART_MAIN);
         lv.lv_obj_set_style_text_font(sl, lv.lv_font_montserrat_16, lv.LV_PART_MAIN);
         lv.lv_obj_align(sl, lv.LV_ALIGN_TOP_LEFT, 0, 160);
     }
 
-    const row2 = createCardRow(content, 190);
+    const env_gap: i32 = 12;
+    const env_cols: i32 = 5;
+    const env_card_w: i32 = @divTrunc(content_w_i32 - env_gap * (env_cols - 1), env_cols);
+    const row2 = createCardRow(content, 190, 120, env_gap);
 
-    lbl_distance_24h = createSensorCard(row2, card_w, card_h, "Distance", "--");
-    lbl_speed_24h = createSensorCard(row2, card_w, card_h, "Avg Speed", "--");
+    lbl_env_aws = createSensorCard(row2, env_card_w, card_h, "AWS", "--");
+    lbl_env_awa = createSensorCard(row2, env_card_w, card_h, "AWA", "--");
+    lbl_env_tws = createSensorCard(row2, env_card_w, card_h, "TWS", "--");
+    lbl_env_twd = createSensorCard(row2, env_card_w, card_h, "TWD", "--");
+    lbl_env_baro = createSensorCard(row2, env_card_w, card_h, "Baro", "--");
+
+    // --- Row 3: Last 24h section ---
+    const section_label_3 = lv.lv_label_create(content);
+    if (section_label_3) |sl| {
+        lv.lv_label_set_text(sl, "Last 24h");
+        lv.lv_obj_set_style_text_color(sl, lv.lv_color_hex(COL_ACCENT_2), lv.LV_PART_MAIN);
+        lv.lv_obj_set_style_text_font(sl, lv.lv_font_montserrat_16, lv.LV_PART_MAIN);
+        lv.lv_obj_align(sl, lv.LV_ALIGN_TOP_LEFT, 0, 320);
+    }
+
+    const row3 = createCardRow(content, 350, 120, 15);
+    const card_w_24h: i32 = @divTrunc(content_w_i32 - 15, 2);
+
+    lbl_distance_24h = createSensorCard(row3, card_w_24h, card_h, "Distance", "--");
+    lbl_speed_24h = createSensorCard(row3, card_w_24h, card_h, "Avg Speed", "--");
 }
 
-fn createCardRow(parent: ?*lv.lv_obj_t, y_offset: i32) ?*lv.lv_obj_t {
+fn createCardRow(parent: ?*lv.lv_obj_t, y_offset: i32, row_h: i32, gap: i32) ?*lv.lv_obj_t {
     if (parent == null) return null;
 
     const row = lv.lv_obj_create(parent);
     if (row == null) return null;
 
     const content_w = page_w - 40;
-    lv.lv_obj_set_size(row, @intCast(content_w), 120);
+    lv.lv_obj_set_size(row, @intCast(content_w), row_h);
     lv.lv_obj_align(row, lv.LV_ALIGN_TOP_LEFT, 0, y_offset);
     lv.lv_obj_set_style_bg_opa(row, lv.LV_OPA_TRANSP, lv.LV_PART_MAIN);
     lv.lv_obj_set_style_border_width(row, 0, lv.LV_PART_MAIN);
     lv.lv_obj_set_style_pad_all(row, 0, lv.LV_PART_MAIN);
-    lv.lv_obj_set_style_pad_column(row, 15, lv.LV_PART_MAIN);
+    lv.lv_obj_set_style_pad_column(row, gap, lv.LV_PART_MAIN);
     lv.lv_obj_set_flex_flow(row, lv.LV_FLEX_FLOW_ROW);
     lv.lv_obj_set_flex_align(row, lv.LV_FLEX_ALIGN_START, lv.LV_FLEX_ALIGN_START, lv.LV_FLEX_ALIGN_START);
     lv.lv_obj_remove_flag(row, lv.LV_OBJ_FLAG_SCROLLABLE);
@@ -452,15 +648,253 @@ fn createCardRow(parent: ?*lv.lv_obj_t, y_offset: i32) ?*lv.lv_obj_t {
 fn createAnchorPage(parent: ?*lv.lv_obj_t) void {
     if (parent == null) return;
 
-    createPageTitle(parent, "Anchor Alarm", PAGE_ANCHOR);
+    const root = lv.lv_obj_create(parent);
+    if (root == null) return;
+    anchor_root = root;
 
-    // Placeholder content
-    const placeholder = lv.lv_label_create(parent);
-    if (placeholder) |p| {
-        lv.lv_label_set_text(p, "Anchor watch configuration\ncoming soon...");
-        lv.lv_obj_set_style_text_color(p, lv.lv_color_hex(COL_TEXT_DIM), lv.LV_PART_MAIN);
-        lv.lv_obj_set_style_text_font(p, lv.lv_font_montserrat_20, lv.LV_PART_MAIN);
-        lv.lv_obj_align(p, lv.LV_ALIGN_CENTER, 0, 0);
+    lv.lv_obj_set_size(root, @intCast(page_w - 40), @intCast(screen_h - 40));
+    lv.lv_obj_align(root, lv.LV_ALIGN_TOP_LEFT, 0, 0);
+    lv.lv_obj_set_style_bg_color(root, lv.lv_color_hex(0x000000), lv.LV_PART_MAIN);
+    lv.lv_obj_set_style_bg_opa(root, lv.LV_OPA_COVER, lv.LV_PART_MAIN);
+    lv.lv_obj_set_style_radius(root, 0, lv.LV_PART_MAIN);
+    lv.lv_obj_set_style_border_width(root, 0, lv.LV_PART_MAIN);
+    lv.lv_obj_set_style_pad_all(root, 0, lv.LV_PART_MAIN);
+    lv.lv_obj_remove_flag(root, lv.LV_OBJ_FLAG_SCROLLABLE);
+
+    const map = lv.lv_obj_create(root);
+    if (map == null) return;
+    anchor_map = map;
+    lv.lv_obj_set_size(map, lv.LV_PCT(100), lv.LV_PCT(100));
+    lv.lv_obj_align(map, lv.LV_ALIGN_TOP_LEFT, 0, 0);
+    lv.lv_obj_set_style_bg_color(map, lv.lv_color_hex(0x000000), lv.LV_PART_MAIN);
+    lv.lv_obj_set_style_bg_opa(map, lv.LV_OPA_COVER, lv.LV_PART_MAIN);
+    lv.lv_obj_set_style_border_width(map, 0, lv.LV_PART_MAIN);
+    lv.lv_obj_set_style_pad_all(map, 0, lv.LV_PART_MAIN);
+    lv.lv_obj_remove_flag(map, lv.LV_OBJ_FLAG_SCROLLABLE);
+
+    // Radius ring around fixed anchor position.
+    const ring = lv.lv_obj_create(map);
+    if (ring) |r| {
+        anchor_ring = r;
+        lv.lv_obj_set_size(r, 380, 380);
+        lv.lv_obj_set_style_bg_opa(r, lv.LV_OPA_TRANSP, lv.LV_PART_MAIN);
+        lv.lv_obj_set_style_border_width(r, 2, lv.LV_PART_MAIN);
+        lv.lv_obj_set_style_border_color(r, lv.lv_color_hex(0x3CAEA3), lv.LV_PART_MAIN);
+        lv.lv_obj_set_style_radius(r, 190, lv.LV_PART_MAIN);
+        lv.lv_obj_align(r, lv.LV_ALIGN_CENTER, 0, -36);
+    }
+
+    // Anchor icon in map center (minus navbar by page layout).
+    const anchor_img = lv.lv_image_create(map);
+    if (anchor_img) |im| {
+        anchor_icon = im;
+        lv.lv_image_set_src(im, &lv.tabler_icon_anchor_S);
+        lv.lv_obj_set_style_image_recolor(im, lv.lv_color_hex(0xFFD166), lv.LV_PART_MAIN);
+        lv.lv_obj_set_style_image_recolor_opa(im, lv.LV_OPA_COVER, lv.LV_PART_MAIN);
+        lv.lv_obj_align(im, lv.LV_ALIGN_CENTER, 0, -36);
+    }
+
+    const boat_img = lv.lv_image_create(map);
+    if (boat_img) |im| {
+        anchor_boat = im;
+        lv.lv_image_set_src(im, &lv.tabler_icon_sailboat_P);
+        lv.lv_obj_set_style_image_recolor(im, lv.lv_color_hex(0x8DCCFF), lv.LV_PART_MAIN);
+        lv.lv_obj_set_style_image_recolor_opa(im, lv.LV_OPA_COVER, lv.LV_PART_MAIN);
+        lv.lv_obj_align(im, lv.LV_ALIGN_CENTER, 0, 120);
+    }
+
+    // Self track dots
+    for (0..ANCHOR_TRACK_POINTS) |i| {
+        const d = lv.lv_obj_create(map);
+        if (d) |dot| {
+            anchor_track_dots[i] = dot;
+            lv.lv_obj_set_size(dot, 2, 2);
+            lv.lv_obj_set_style_radius(dot, 1, lv.LV_PART_MAIN);
+            lv.lv_obj_set_style_bg_color(dot, lv.lv_color_hex(0x5DADE2), lv.LV_PART_MAIN);
+            lv.lv_obj_set_style_bg_opa(dot, lv.LV_OPA_COVER, lv.LV_PART_MAIN);
+            lv.lv_obj_set_style_border_width(dot, 0, lv.LV_PART_MAIN);
+            lv.lv_obj_add_flag(dot, lv.LV_OBJ_FLAG_HIDDEN);
+        }
+    }
+
+    // Anchor-to-boat line dots
+    for (0..ANCHOR_LINE_POINTS) |i| {
+        const d = lv.lv_obj_create(map);
+        if (d) |dot| {
+            anchor_line_dots[i] = dot;
+            lv.lv_obj_set_size(dot, 2, 2);
+            lv.lv_obj_set_style_radius(dot, 1, lv.LV_PART_MAIN);
+            lv.lv_obj_set_style_bg_color(dot, lv.lv_color_hex(0xE0E0E0), lv.LV_PART_MAIN);
+            lv.lv_obj_set_style_bg_opa(dot, lv.LV_OPA_COVER, lv.LV_PART_MAIN);
+            lv.lv_obj_set_style_border_width(dot, 0, lv.LV_PART_MAIN);
+            lv.lv_obj_add_flag(dot, lv.LV_OBJ_FLAG_HIDDEN);
+        }
+    }
+
+    // Other vessels and their simplified tracks
+    for (0..ANCHOR_MAX_OTHER) |i| {
+        const other = lv.lv_image_create(map);
+        if (other) |im| {
+            anchor_other_boats[i] = im;
+            lv.lv_image_set_src(im, &lv.tabler_icon_sailboat_S);
+            lv.lv_obj_set_style_image_recolor(im, lv.lv_color_hex(0xAAAAAA), lv.LV_PART_MAIN);
+            lv.lv_obj_set_style_image_recolor_opa(im, lv.LV_OPA_COVER, lv.LV_PART_MAIN);
+            lv.lv_obj_add_flag(im, lv.LV_OBJ_FLAG_HIDDEN);
+        }
+
+        for (0..ANCHOR_OTHER_TRACK_POINTS) |j| {
+            const td = lv.lv_obj_create(map);
+            if (td) |dot| {
+                anchor_other_tracks[i][j] = dot;
+                lv.lv_obj_set_size(dot, 1, 1);
+                lv.lv_obj_set_style_radius(dot, 1, lv.LV_PART_MAIN);
+                lv.lv_obj_set_style_bg_color(dot, lv.lv_color_hex(0x666666), lv.LV_PART_MAIN);
+                lv.lv_obj_set_style_bg_opa(dot, lv.LV_OPA_COVER, lv.LV_PART_MAIN);
+                lv.lv_obj_set_style_border_width(dot, 0, lv.LV_PART_MAIN);
+                lv.lv_obj_add_flag(dot, lv.LV_OBJ_FLAG_HIDDEN);
+            }
+        }
+    }
+
+    // Floating title/status overlay
+    const overlay = lv.lv_obj_create(root);
+    if (overlay) |ov| {
+        lv.lv_obj_set_size(ov, lv.LV_PCT(100), 84);
+        lv.lv_obj_align(ov, lv.LV_ALIGN_TOP_LEFT, 0, 0);
+        lv.lv_obj_set_style_bg_color(ov, lv.lv_color_hex(0x000000), lv.LV_PART_MAIN);
+        lv.lv_obj_set_style_bg_opa(ov, lv.LV_OPA_50, lv.LV_PART_MAIN);
+        lv.lv_obj_set_style_border_width(ov, 0, lv.LV_PART_MAIN);
+        lv.lv_obj_set_style_pad_left(ov, 14, lv.LV_PART_MAIN);
+        lv.lv_obj_set_style_pad_right(ov, 14, lv.LV_PART_MAIN);
+        lv.lv_obj_set_style_pad_top(ov, 10, lv.LV_PART_MAIN);
+        lv.lv_obj_set_style_pad_bottom(ov, 8, lv.LV_PART_MAIN);
+        lv.lv_obj_set_flex_flow(ov, lv.LV_FLEX_FLOW_COLUMN);
+        lv.lv_obj_set_flex_align(ov, lv.LV_FLEX_ALIGN_START, lv.LV_FLEX_ALIGN_START, lv.LV_FLEX_ALIGN_START);
+        lv.lv_obj_remove_flag(ov, lv.LV_OBJ_FLAG_SCROLLABLE);
+
+        const title = lv.lv_label_create(ov);
+        if (title) |t| {
+            lv.lv_label_set_text(t, "Anchor Alarm");
+            lv.lv_obj_set_style_text_color(t, lv.lv_color_hex(0xF8F9FA), lv.LV_PART_MAIN);
+            lv.lv_obj_set_style_text_font(t, lv.lv_font_montserrat_24, lv.LV_PART_MAIN);
+        }
+
+        anchor_status = lv.lv_label_create(ov);
+        if (anchor_status) |s| {
+            lv.lv_label_set_text(s, "Detecting SignalK...");
+            lv.lv_obj_set_style_text_color(s, lv.lv_color_hex(0xE9C46A), lv.LV_PART_MAIN);
+            lv.lv_obj_set_style_text_font(s, lv.lv_font_montserrat_16, lv.LV_PART_MAIN);
+        }
+
+        anchor_info = lv.lv_label_create(ov);
+        if (anchor_info) |s| {
+            lv.lv_label_set_text(s, "Distance -- m");
+            lv.lv_obj_set_style_text_color(s, lv.lv_color_hex(0xB0BEC5), lv.LV_PART_MAIN);
+            lv.lv_obj_set_style_text_font(s, lv.lv_font_montserrat_14, lv.LV_PART_MAIN);
+        }
+    }
+
+    createAnchorControls(root);
+}
+
+const ANCHOR_BTN_RADIUS_DEC: usize = 1;
+const ANCHOR_BTN_TOGGLE: usize = 2;
+const ANCHOR_BTN_RADIUS_INC: usize = 3;
+const ANCHOR_BTN_ZOOM_DEC: usize = 4;
+const ANCHOR_BTN_ZOOM_INC: usize = 5;
+
+fn createAnchorControls(parent: ?*lv.lv_obj_t) void {
+    if (parent == null) return;
+
+    const bar = lv.lv_obj_create(parent);
+    if (bar == null) return;
+
+    lv.lv_obj_set_size(bar, lv.LV_PCT(100), 120);
+    lv.lv_obj_align(bar, lv.LV_ALIGN_BOTTOM_MID, 0, 0);
+    lv.lv_obj_set_style_bg_color(bar, lv.lv_color_hex(0x000000), lv.LV_PART_MAIN);
+    lv.lv_obj_set_style_bg_opa(bar, lv.LV_OPA_50, lv.LV_PART_MAIN);
+    lv.lv_obj_set_style_border_width(bar, 0, lv.LV_PART_MAIN);
+    lv.lv_obj_set_style_pad_left(bar, 10, lv.LV_PART_MAIN);
+    lv.lv_obj_set_style_pad_right(bar, 10, lv.LV_PART_MAIN);
+    lv.lv_obj_set_style_pad_top(bar, 8, lv.LV_PART_MAIN);
+    lv.lv_obj_set_style_pad_bottom(bar, 8, lv.LV_PART_MAIN);
+    lv.lv_obj_set_style_pad_column(bar, 12, lv.LV_PART_MAIN);
+    lv.lv_obj_set_flex_flow(bar, lv.LV_FLEX_FLOW_ROW);
+    lv.lv_obj_set_flex_align(bar, lv.LV_FLEX_ALIGN_SPACE_BETWEEN, lv.LV_FLEX_ALIGN_CENTER, lv.LV_FLEX_ALIGN_CENTER);
+    lv.lv_obj_remove_flag(bar, lv.LV_OBJ_FLAG_SCROLLABLE);
+
+    const left = lv.lv_obj_create(bar);
+    if (left) |l| {
+        lv.lv_obj_set_size(l, lv.LV_SIZE_CONTENT, lv.LV_SIZE_CONTENT);
+        lv.lv_obj_set_style_bg_opa(l, lv.LV_OPA_TRANSP, lv.LV_PART_MAIN);
+        lv.lv_obj_set_style_border_width(l, 0, lv.LV_PART_MAIN);
+        lv.lv_obj_set_style_pad_all(l, 0, lv.LV_PART_MAIN);
+        lv.lv_obj_set_style_pad_column(l, 8, lv.LV_PART_MAIN);
+        lv.lv_obj_set_flex_flow(l, lv.LV_FLEX_FLOW_ROW);
+        lv.lv_obj_set_flex_align(l, lv.LV_FLEX_ALIGN_START, lv.LV_FLEX_ALIGN_CENTER, lv.LV_FLEX_ALIGN_CENTER);
+        lv.lv_obj_remove_flag(l, lv.LV_OBJ_FLAG_SCROLLABLE);
+
+        _ = createAnchorBtn(l, "-", 100, ANCHOR_BTN_RADIUS_DEC, false);
+        anchor_action_btn_label = createAnchorBtn(l, "Drop Anchor", 300, ANCHOR_BTN_TOGGLE, true);
+        _ = createAnchorBtn(l, "+", 100, ANCHOR_BTN_RADIUS_INC, false);
+    }
+
+    const right = lv.lv_obj_create(bar);
+    if (right) |r| {
+        lv.lv_obj_set_size(r, lv.LV_SIZE_CONTENT, lv.LV_SIZE_CONTENT);
+        lv.lv_obj_set_style_bg_opa(r, lv.LV_OPA_TRANSP, lv.LV_PART_MAIN);
+        lv.lv_obj_set_style_border_width(r, 0, lv.LV_PART_MAIN);
+        lv.lv_obj_set_style_pad_all(r, 0, lv.LV_PART_MAIN);
+        lv.lv_obj_set_style_pad_column(r, 8, lv.LV_PART_MAIN);
+        lv.lv_obj_set_flex_flow(r, lv.LV_FLEX_FLOW_ROW);
+        lv.lv_obj_set_flex_align(r, lv.LV_FLEX_ALIGN_END, lv.LV_FLEX_ALIGN_CENTER, lv.LV_FLEX_ALIGN_CENTER);
+        lv.lv_obj_remove_flag(r, lv.LV_OBJ_FLAG_SCROLLABLE);
+
+        _ = createAnchorBtn(r, "-", 100, ANCHOR_BTN_ZOOM_DEC, false);
+        _ = createAnchorBtn(r, "+", 100, ANCHOR_BTN_ZOOM_INC, false);
+    }
+}
+
+fn createAnchorBtn(parent: ?*lv.lv_obj_t, text: [*:0]const u8, width: i32, id: usize, keep_label: bool) ?*lv.lv_obj_t {
+    if (parent == null) return null;
+    const btn = lv.lv_button_create(parent);
+    if (btn == null) return null;
+
+    lv.lv_obj_set_size(btn, width, 100);
+    lv.lv_obj_set_style_radius(btn, 10, lv.LV_PART_MAIN);
+    lv.lv_obj_set_style_bg_color(btn, lv.lv_color_hex(0x1E1E1E), lv.LV_PART_MAIN);
+    lv.lv_obj_set_style_bg_opa(btn, lv.LV_OPA_COVER, lv.LV_PART_MAIN);
+    lv.lv_obj_set_style_border_width(btn, 2, lv.LV_PART_MAIN);
+    lv.lv_obj_set_style_border_color(btn, lv.lv_color_hex(0x4F5D75), lv.LV_PART_MAIN);
+    lv.lv_obj_set_style_shadow_width(btn, 0, lv.LV_PART_MAIN);
+
+    const lbl = lv.lv_label_create(btn);
+    var out: ?*lv.lv_obj_t = null;
+    if (lbl) |l| {
+        lv.lv_label_set_text(l, text);
+        lv.lv_obj_set_style_text_color(l, lv.lv_color_hex(0xF4F1DE), lv.LV_PART_MAIN);
+        lv.lv_obj_set_style_text_font(l, lv.lv_font_montserrat_28, lv.LV_PART_MAIN);
+        lv.lv_obj_center(l);
+        if (keep_label) out = l;
+    }
+
+    const user_data: ?*anyopaque = @ptrFromInt(id);
+    _ = lv.lv_obj_add_event_cb(btn, anchorButtonCb, lv.LV_EVENT_CLICKED, user_data);
+    return out;
+}
+
+fn anchorButtonCb(e: ?*lv.lv_event_t) callconv(.C) void {
+    if (e == null) return;
+    const user_data = lv.lv_event_get_user_data(e);
+    const id: usize = @intFromPtr(user_data);
+
+    switch (id) {
+        ANCHOR_BTN_RADIUS_DEC => js_anchor_action(ANCHOR_ACTION_RADIUS_DEC.ptr, ANCHOR_ACTION_RADIUS_DEC.len, 0),
+        ANCHOR_BTN_RADIUS_INC => js_anchor_action(ANCHOR_ACTION_RADIUS_INC.ptr, ANCHOR_ACTION_RADIUS_INC.len, 0),
+        ANCHOR_BTN_TOGGLE => js_anchor_action(ANCHOR_ACTION_DROP_RAISE.ptr, ANCHOR_ACTION_DROP_RAISE.len, 0),
+        ANCHOR_BTN_ZOOM_DEC => js_anchor_action(ANCHOR_ACTION_ZOOM_DEC.ptr, ANCHOR_ACTION_ZOOM_DEC.len, 0),
+        ANCHOR_BTN_ZOOM_INC => js_anchor_action(ANCHOR_ACTION_ZOOM_INC.ptr, ANCHOR_ACTION_ZOOM_INC.len, 0),
+        else => {},
     }
 }
 
@@ -730,19 +1164,41 @@ fn updateCode0Style() void {
 
 /// Update a sensor value label by sensor ID.
 /// sensor_id mapping:
-///   0 = latitude
-///   1 = longitude
-///   2 = distance_24h
-///   3 = speed_24h
+///   0  = latitude
+///   1  = longitude
+///   2  = vessel log
+///   3  = heading true
+///   4  = stw
+///   5  = sog
+///   6  = cog
+///   7  = aws
+///   8  = awa
+///   9  = tws (15m)
+///   10 = twd (15m)
+///   11 = barometric pressure
+///   12 = 24h distance
+///   13 = 24h average speed
+///   14 = formatted date/time header
 export fn update_sensor(sensor_id: i32, value_ptr: [*]const u8, value_len: i32) void {
     const value: [*:0]const u8 = @ptrCast(value_ptr);
     _ = value_len; // text is null-terminated via the Zig/LVGL label API
 
     const label: ?*lv.lv_obj_t = switch (sensor_id) {
-        0 => lbl_latitude,
-        1 => lbl_longitude,
-        2 => lbl_distance_24h,
-        3 => lbl_speed_24h,
+        SENSOR_ID_LATITUDE => lbl_latitude,
+        SENSOR_ID_LONGITUDE => lbl_longitude,
+        SENSOR_ID_LOG => lbl_vessel_log,
+        SENSOR_ID_HDG => lbl_vessel_hdg,
+        SENSOR_ID_STW => lbl_vessel_stw,
+        SENSOR_ID_SOG => lbl_vessel_sog,
+        SENSOR_ID_COG => lbl_vessel_cog,
+        SENSOR_ID_AWS => lbl_env_aws,
+        SENSOR_ID_AWA => lbl_env_awa,
+        SENSOR_ID_TWS => lbl_env_tws,
+        SENSOR_ID_TWD => lbl_env_twd,
+        SENSOR_ID_BARO => lbl_env_baro,
+        SENSOR_ID_DISTANCE_24H => lbl_distance_24h,
+        SENSOR_ID_SPEED_24H => lbl_speed_24h,
+        SENSOR_ID_DATETIME => lbl_logbook_datetime,
         else => null,
     };
 
@@ -785,4 +1241,85 @@ export fn update_code0(value_ptr: [*]const u8, value_len: i32) void {
     const value = value_ptr[0..@intCast(value_len)];
     code0_active = std.mem.eql(u8, value, "on");
     updateCode0Style();
+}
+
+export fn update_anchor_status(value_ptr: [*]const u8, value_len: i32) void {
+    _ = value_len;
+    if (anchor_status) |lbl| {
+        lv.lv_label_set_text(lbl, @ptrCast(value_ptr));
+    }
+}
+
+export fn update_anchor_info(value_ptr: [*]const u8, value_len: i32) void {
+    _ = value_len;
+    if (anchor_info) |lbl| {
+        lv.lv_label_set_text(lbl, @ptrCast(value_ptr));
+    }
+}
+
+export fn update_anchor_mode(is_set: i32) void {
+    anchor_is_set = is_set != 0;
+    if (anchor_action_btn_label) |lbl| {
+        lv.lv_label_set_text(lbl, if (anchor_is_set) "Raise Anchor" else "Drop Anchor");
+    }
+
+    if (anchor_ring) |ring| {
+        const color: u32 = if (anchor_is_set) 0x2A9D8F else 0x3A86FF;
+        lv.lv_obj_set_style_border_color(ring, lv.lv_color_hex(color), lv.LV_PART_MAIN);
+    }
+}
+
+export fn update_anchor_ring_px(diameter_px: i32) void {
+    if (anchor_ring) |ring| {
+        const d = std.math.clamp(diameter_px, 40, 1200);
+        lv.lv_obj_set_size(ring, d, d);
+        lv.lv_obj_set_style_radius(ring, @divTrunc(d, 2), lv.LV_PART_MAIN);
+        lv.lv_obj_align(ring, lv.LV_ALIGN_CENTER, 0, -36);
+    }
+}
+
+export fn update_anchor_boat_px(x: i32, y: i32) void {
+    if (anchor_boat) |boat| {
+        lv.lv_obj_set_pos(boat, x - 12, y - 12);
+    }
+}
+
+fn updatePoint(obj: ?*lv.lv_obj_t, x: i32, y: i32, visible: bool) void {
+    if (obj) |dot| {
+        lv.lv_obj_set_pos(dot, x, y);
+        if (visible) {
+            lv.lv_obj_remove_flag(dot, lv.LV_OBJ_FLAG_HIDDEN);
+        } else {
+            lv.lv_obj_add_flag(dot, lv.LV_OBJ_FLAG_HIDDEN);
+        }
+    }
+}
+
+export fn update_anchor_line_point(index: i32, x: i32, y: i32, visible: i32) void {
+    if (index < 0 or index >= ANCHOR_LINE_POINTS) return;
+    updatePoint(anchor_line_dots[@intCast(index)], x, y, visible != 0);
+}
+
+export fn update_anchor_track_point(index: i32, x: i32, y: i32, visible: i32) void {
+    if (index < 0 or index >= ANCHOR_TRACK_POINTS) return;
+    updatePoint(anchor_track_dots[@intCast(index)], x, y, visible != 0);
+}
+
+export fn update_anchor_other_boat(index: i32, x: i32, y: i32, visible: i32) void {
+    if (index < 0 or index >= ANCHOR_MAX_OTHER) return;
+    const idx: usize = @intCast(index);
+    if (anchor_other_boats[idx]) |boat| {
+        lv.lv_obj_set_pos(boat, x - 8, y - 8);
+        if (visible != 0) {
+            lv.lv_obj_remove_flag(boat, lv.LV_OBJ_FLAG_HIDDEN);
+        } else {
+            lv.lv_obj_add_flag(boat, lv.LV_OBJ_FLAG_HIDDEN);
+        }
+    }
+}
+
+export fn update_anchor_other_track_point(vessel_index: i32, point_index: i32, x: i32, y: i32, visible: i32) void {
+    if (vessel_index < 0 or vessel_index >= ANCHOR_MAX_OTHER) return;
+    if (point_index < 0 or point_index >= ANCHOR_OTHER_TRACK_POINTS) return;
+    updatePoint(anchor_other_tracks[@intCast(vessel_index)][@intCast(point_index)], x, y, visible != 0);
 }

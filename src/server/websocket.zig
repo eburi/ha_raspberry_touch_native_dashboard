@@ -15,6 +15,7 @@ const std = @import("std");
 const zap = @import("zap");
 
 const ha_client = @import("ha_client.zig");
+const signalk_client = @import("signalk_client.zig");
 
 /// The WsHandle type from Zap's WebSocket module.
 const WsHandle = zap.WebSockets.WsHandle;
@@ -119,6 +120,8 @@ fn onMessage(context: ?*ClientContext, handle: WsHandle, message: []const u8, is
         handleGetStates(handle);
     } else if (std.mem.eql(u8, type_str, "call_service")) {
         handleCallService(root.object);
+    } else if (std.mem.eql(u8, type_str, "anchor_action")) {
+        handleAnchorAction(handle, root.object);
     } else {
         std.log.warn("WS: unknown message type: {s}", .{type_str});
     }
@@ -169,6 +172,40 @@ fn handleCallService(obj: std.json.ObjectMap) void {
     };
 }
 
+fn handleAnchorAction(handle: WsHandle, obj: std.json.ObjectMap) void {
+    const action_val = obj.get("action") orelse return;
+    if (action_val != .string) return;
+
+    const value: ?f64 = if (obj.get("value")) |v|
+        switch (v) {
+            .float => |f| f,
+            .integer => |i| @floatFromInt(i),
+            else => null,
+        }
+    else
+        null;
+
+    const result = signalk_client.handleAction(action_val.string, value) catch |err| {
+        const err_json = std.fmt.allocPrint(
+            allocator,
+            "{{\"type\":\"anchor_action_result\",\"ok\":false,\"action\":\"{s}\",\"error\":\"{}\"}}",
+            .{ action_val.string, err },
+        ) catch return;
+        defer allocator.free(err_json);
+        WsHandler.write(handle, err_json, true) catch {};
+        return;
+    };
+    defer allocator.free(result);
+
+    const ok_json = std.fmt.allocPrint(
+        allocator,
+        "{{\"type\":\"anchor_action_result\",\"ok\":true,\"action\":\"{s}\",\"result\":{s}}}",
+        .{ action_val.string, result },
+    ) catch return;
+    defer allocator.free(ok_json);
+    WsHandler.write(handle, ok_json, true) catch {};
+}
+
 /// Broadcast a state_changed message to ALL connected WebSocket clients.
 /// Called by the HA client module when it receives a state change from HA.
 /// `new_state_json` is the full serialized new_state object from HA.
@@ -193,6 +230,14 @@ pub fn broadcastStateChange(entity_id: []const u8, new_state_json: []const u8) v
 
 /// Broadcast a bulk states message to all clients.
 pub fn broadcastStates(json: []const u8) void {
+    WsHandler.publish(.{
+        .channel = BROADCAST_CHANNEL,
+        .message = json,
+    });
+}
+
+/// Broadcast an already serialized JSON message to all clients.
+pub fn broadcastRaw(json: []const u8) void {
     WsHandler.publish(.{
         .channel = BROADCAST_CHANNEL,
         .message = json,

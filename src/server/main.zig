@@ -23,6 +23,7 @@ const zap = @import("zap");
 const routes = @import("routes.zig");
 const websocket = @import("websocket.zig");
 const ha_client = @import("ha_client.zig");
+const signalk_client = @import("signalk_client.zig");
 
 /// Server configuration
 pub const Config = struct {
@@ -75,6 +76,8 @@ pub fn main() !void {
     // Initialize modules
     websocket.init(allocator);
     routes.init(allocator);
+    signalk_client.init(allocator);
+    signalk_client.setBroadcaster(websocket.broadcastRaw);
     ha_client.init(allocator, .{
         .ha_url = config.ha_url,
         .token = config.supervisor_token,
@@ -84,6 +87,11 @@ pub fn main() !void {
     ha_client.start() catch |err| {
         std.log.err("Failed to start HA client: {}", .{err});
         // Non-fatal — server still works, just no live HA data
+    };
+
+    signalk_client.start() catch |err| {
+        std.log.err("Failed to start SignalK client: {}", .{err});
+        // Non-fatal — anchor page can still show status + retries
     };
 
     // Set up the Zap listener — NO public_folder (we serve files manually)
@@ -110,7 +118,10 @@ pub fn main() !void {
     });
 
     // Cleanup on shutdown
+    signalk_client.stop();
+    signalk_client.deinit();
     ha_client.stop();
+    ha_client.deinit();
 }
 
 /// Handle WebSocket upgrade requests. facil.io routes upgrade requests

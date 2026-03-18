@@ -25,13 +25,39 @@ let lastTime = 0;
 // WebSocket for HA state relay
 let ws = null;
 
+const NAV_WIDTH = 128;
+const ANCHOR_MAP_W = DISPLAY_W - NAV_WIDTH - 40;
+const ANCHOR_MAP_H = DISPLAY_H - 40;
+const ANCHOR_CENTER_X = Math.round(ANCHOR_MAP_W / 2);
+const ANCHOR_CENTER_Y = Math.round(ANCHOR_MAP_H / 2 - 36);
+
+let anchorZoomMeters = 1;
+let anchorAlarmRadiusMeters = 60;
+let anchorAnchorPos = null;
+let anchorSelfPos = null;
+let anchorWindDirRad = null;
+let anchorSelfTrack = [];
+let anchorOther = new Map();
+
 // Sensor entity ID → WASM sensor_id mapping
 const SENSOR_MAP = {
     "sensor.primrose_latitude": 0,
     "sensor.primrose_longitude": 1,
-    "sensor.primrose_log_change_24h": 2,
-    "sensor.average_speed_over_24h": 3,
+    "sensor.primrose_log": 2,
+    "sensor.primrose_heading_true": 3,
+    "sensor.primrose_stw": 4,
+    "sensor.primrose_sog": 5,
+    "sensor.primrose_cog": 6,
+    "sensor.primrose_aws": 7,
+    "sensor.primrose_awa": 8,
+    "sensor.tws_mean_15min": 9,
+    "sensor.twd_mean_15min": 10,
+    "sensor.barometric_pressure": 11,
+    "sensor.primrose_log_change_24h": 12,
+    "sensor.average_speed_over_24h": 13,
 };
+const HA_DATETIME_ENTITY = "sensor.date_time_iso";
+const SENSOR_ID_DATETIME = 14;
 
 // Sail and toggle entities (used only for subscribe list and routing state updates)
 const SAIL_SELECT_ENTITIES = [
@@ -166,6 +192,29 @@ function js_sail_toggle_changed(entity_ptr, entity_len, state) {
     }
 }
 
+function js_anchor_action(action_ptr, action_len, value) {
+    const action = readWasmString(action_ptr, action_len);
+
+    if (action === "zoom_inc") {
+        anchorZoomMeters = Math.max(0.2, anchorZoomMeters * 0.8);
+        redrawAnchorOverlay();
+        return;
+    }
+    if (action === "zoom_dec") {
+        anchorZoomMeters = Math.min(200, anchorZoomMeters * 1.25);
+        redrawAnchorOverlay();
+        return;
+    }
+
+    if (ws && ws.readyState === WebSocket.OPEN) {
+        ws.send(JSON.stringify({
+            type: "anchor_action",
+            action,
+            value,
+        }));
+    }
+}
+
 /**
  * Write a string into WASM scratch memory and return { ptr, len }.
  * Uses a fixed scratch area at offset 60MB in WASM linear memory.
@@ -197,18 +246,79 @@ function pushSensorValue(sensorId, value) {
     wasm.instance.exports.update_sensor(sensorId, SCRATCH_OFFSET, encoded.length - 1);
 }
 
+function formatHaDateTime(state) {
+    const m = String(state).match(
+        /^(\d{4})-(\d{2})-(\d{2})T(\d{2}):(\d{2})(?::\d{2})?(?:\.\d+)?([+-])(\d{2}):(\d{2})$/,
+    );
+    if (!m) return null;
+
+    const year = m[1];
+    const month = m[2];
+    const day = m[3];
+    const hour = m[4];
+    const minute = m[5];
+    const sign = m[6];
+    const offsetHour = String(Number(m[7]));
+    const offsetMin = m[8];
+
+    const tz = offsetMin === "00"
+        ? `UTC${sign}${offsetHour}`
+        : `UTC${sign}${offsetHour}:${offsetMin}`;
+
+    return `${hour}:${minute} ${day}.${month}.${year} (${tz})`;
+}
+
 /**
  * Process a state update message from the server.
  * Routes entity state to the appropriate WASM export.
  * All knowledge of options/values lives in WASM — JS just passes raw strings.
  */
-function handleStateUpdate(entityId, state) {
+function toConfiguredPrecision(value, attributes) {
+    if (!attributes || typeof attributes !== "object") return null;
+
+    const rawPrecision = attributes.display_precision ?? attributes.suggested_display_precision;
+    const precision = Number(rawPrecision);
+    if (!Number.isInteger(precision) || precision < 0 || precision > 12) return null;
+
+    const numericValue = Number(value);
+    if (!Number.isFinite(numericValue)) return null;
+
+    return numericValue.toFixed(precision);
+}
+
+function formatSensorState(state, attributes) {
+    const stateText = String(state);
+    if (stateText === "unknown" || stateText === "unavailable") {
+        return stateText;
+    }
+
+    const preciseValue = toConfiguredPrecision(stateText, attributes);
+    const valueText = preciseValue ?? stateText;
+
+    const unit = attributes && typeof attributes.unit_of_measurement === "string"
+        ? attributes.unit_of_measurement.trim()
+        : "";
+
+    if (!unit) return valueText;
+    if (valueText.endsWith(` ${unit}`)) return valueText;
+    return `${valueText} ${unit}`;
+}
+
+function handleStateUpdate(entityId, state, attributes) {
     if (!wasm) return;
+
+    if (entityId === HA_DATETIME_ENTITY) {
+        const formatted = formatHaDateTime(state);
+        if (formatted) {
+            pushSensorValue(SENSOR_ID_DATETIME, formatted);
+        }
+        return;
+    }
 
     // Check sensor map
     const sensorId = SENSOR_MAP[entityId];
     if (sensorId !== undefined) {
-        pushSensorValue(sensorId, state);
+        pushSensorValue(sensorId, formatSensorState(state, attributes));
         return;
     }
 
@@ -231,6 +341,183 @@ function handleStateUpdate(entityId, state) {
         if (s) wasm.instance.exports.update_code0(s.ptr, s.len);
         return;
     }
+}
+
+function pushWasmStringExport(fnName, text) {
+    if (!wasm || !wasm.instance.exports[fnName]) return;
+    const s = writeStringToWasm(String(text));
+    if (!s) return;
+    wasm.instance.exports[fnName](s.ptr, s.len);
+}
+
+function toMeters(lat1, lon1, lat2, lon2) {
+    const R = 6371000;
+    const dLat = (lat2 - lat1) * Math.PI / 180;
+    const dLon = (lon2 - lon1) * Math.PI / 180;
+    const avgLat = ((lat1 + lat2) / 2) * Math.PI / 180;
+    const dy = dLat * R;
+    const dx = dLon * R * Math.cos(avgLat);
+    return { dx, dy };
+}
+
+function drawLineDots(fromX, fromY, toX, toY) {
+    const steps = 40;
+    for (let i = 0; i < steps; i += 1) {
+        const t = i / (steps - 1);
+        const x = Math.round(fromX + (toX - fromX) * t);
+        const y = Math.round(fromY + (toY - fromY) * t);
+        wasm.instance.exports.update_anchor_line_point(i, x, y, 1);
+    }
+}
+
+function hideLineDots() {
+    for (let i = 0; i < 40; i += 1) {
+        wasm.instance.exports.update_anchor_line_point(i, 0, 0, 0);
+    }
+}
+
+function pushTrack(track, maxPoints, updateFn) {
+    for (let i = 0; i < maxPoints; i += 1) {
+        const p = track[track.length - maxPoints + i];
+        if (!p || !anchorAnchorPos) {
+            updateFn(i, 0, 0, 0);
+            continue;
+        }
+        const { dx, dy } = toMeters(anchorAnchorPos.latitude, anchorAnchorPos.longitude, p.latitude, p.longitude);
+        const x = Math.round(ANCHOR_CENTER_X + dx / anchorZoomMeters);
+        const y = Math.round(ANCHOR_CENTER_Y - dy / anchorZoomMeters);
+        const visible = x >= -10 && y >= -10 && x <= ANCHOR_MAP_W + 10 && y <= ANCHOR_MAP_H + 10;
+        updateFn(i, x, y, visible ? 1 : 0);
+    }
+}
+
+function redrawAnchorOverlay() {
+    if (!wasm || !anchorAnchorPos || !anchorSelfPos) {
+        hideLineDots();
+        pushWasmStringExport("update_anchor_info", "Distance -- m");
+        return;
+    }
+
+    const ringDiameter = Math.round((anchorAlarmRadiusMeters * 2) / anchorZoomMeters);
+    wasm.instance.exports.update_anchor_ring_px(ringDiameter);
+
+    const offset = toMeters(anchorAnchorPos.latitude, anchorAnchorPos.longitude, anchorSelfPos.latitude, anchorSelfPos.longitude);
+    const boatX = Math.round(ANCHOR_CENTER_X + offset.dx / anchorZoomMeters);
+    const boatY = Math.round(ANCHOR_CENTER_Y - offset.dy / anchorZoomMeters);
+    wasm.instance.exports.update_anchor_boat_px(boatX, boatY);
+
+    drawLineDots(ANCHOR_CENTER_X, ANCHOR_CENTER_Y, boatX, boatY);
+
+    const distance = Math.round(Math.sqrt(offset.dx * offset.dx + offset.dy * offset.dy));
+    pushWasmStringExport("update_anchor_info", `Distance ${distance} m`);
+
+    pushTrack(anchorSelfTrack, 48, (i, x, y, v) => wasm.instance.exports.update_anchor_track_point(i, x, y, v));
+
+    const others = Array.from(anchorOther.values())
+        .filter((v) => v.position)
+        .map((v) => {
+            const o = toMeters(anchorAnchorPos.latitude, anchorAnchorPos.longitude, v.position.latitude, v.position.longitude);
+            const dist = Math.sqrt(o.dx * o.dx + o.dy * o.dy);
+            return { v, o, dist };
+        })
+        .sort((a, b) => a.dist - b.dist)
+        .slice(0, 6);
+
+    for (let i = 0; i < 6; i += 1) {
+        const item = others[i];
+        if (!item) {
+            wasm.instance.exports.update_anchor_other_boat(i, 0, 0, 0);
+            for (let j = 0; j < 20; j += 1) {
+                wasm.instance.exports.update_anchor_other_track_point(i, j, 0, 0, 0);
+            }
+            continue;
+        }
+        const x = Math.round(ANCHOR_CENTER_X + item.o.dx / anchorZoomMeters);
+        const y = Math.round(ANCHOR_CENTER_Y - item.o.dy / anchorZoomMeters);
+        const visible = x >= -20 && y >= -20 && x <= ANCHOR_MAP_W + 20 && y <= ANCHOR_MAP_H + 20;
+        wasm.instance.exports.update_anchor_other_boat(i, x, y, visible ? 1 : 0);
+
+        const tr = item.v.track || [];
+        for (let j = 0; j < 20; j += 1) {
+            const p = tr[tr.length - 20 + j];
+            if (!p) {
+                wasm.instance.exports.update_anchor_other_track_point(i, j, 0, 0, 0);
+                continue;
+            }
+            const po = toMeters(anchorAnchorPos.latitude, anchorAnchorPos.longitude, p.latitude, p.longitude);
+            const tx = Math.round(ANCHOR_CENTER_X + po.dx / anchorZoomMeters);
+            const ty = Math.round(ANCHOR_CENTER_Y - po.dy / anchorZoomMeters);
+            const tv = tx >= -10 && ty >= -10 && tx <= ANCHOR_MAP_W + 10 && ty <= ANCHOR_MAP_H + 10;
+            wasm.instance.exports.update_anchor_other_track_point(i, j, tx, ty, tv ? 1 : 0);
+        }
+    }
+}
+
+function upsertTrack(track, pos, maxSize) {
+    const last = track[track.length - 1];
+    if (!last || last.latitude !== pos.latitude || last.longitude !== pos.longitude) {
+        track.push({ latitude: pos.latitude, longitude: pos.longitude });
+        if (track.length > maxSize) {
+            track.splice(0, track.length - maxSize);
+        }
+    }
+}
+
+function ingestSignalKData(data) {
+    if (!data || !data.self) return;
+
+    const self = data.self;
+    const nav = self.navigation || {};
+    const env = self.environment || {};
+    const pos = nav.position && nav.position.value;
+    if (pos && typeof pos.latitude === "number" && typeof pos.longitude === "number") {
+        anchorSelfPos = { latitude: pos.latitude, longitude: pos.longitude };
+        upsertTrack(anchorSelfTrack, anchorSelfPos, 48);
+    }
+
+    const wind = env.wind && env.wind.directionTrue && env.wind.directionTrue.value;
+    if (typeof wind === "number") {
+        anchorWindDirRad = wind;
+    }
+
+    const anchor = nav.anchor || {};
+    const anchorPos = anchor.position && anchor.position.value;
+    const anchorRadius = anchor.maxRadius && anchor.maxRadius.value;
+    const anchorState = anchor.state && anchor.state.value;
+
+    if (anchorPos && typeof anchorPos.latitude === "number" && typeof anchorPos.longitude === "number") {
+        anchorAnchorPos = { latitude: anchorPos.latitude, longitude: anchorPos.longitude };
+    } else if (!anchorAnchorPos && anchorSelfPos) {
+        anchorAnchorPos = { ...anchorSelfPos };
+    }
+
+    if (typeof anchorRadius === "number" && Number.isFinite(anchorRadius) && anchorRadius > 0) {
+        anchorAlarmRadiusMeters = anchorRadius;
+        const target = (ANCHOR_MAP_H * 0.70) / (anchorAlarmRadiusMeters * 2);
+        anchorZoomMeters = Math.max(0.2, 1 / target);
+    }
+
+    wasm.instance.exports.update_anchor_mode(anchorState === "on" ? 1 : 0);
+
+    if (data.vessels && typeof data.vessels === "object") {
+        const nextOther = new Map();
+        for (const [key, vessel] of Object.entries(data.vessels)) {
+            const vNav = vessel.navigation;
+            if (!vNav || !vNav.position || !vNav.position.value) continue;
+
+            const p = vNav.position.value;
+            if (typeof p.latitude !== "number" || typeof p.longitude !== "number") continue;
+            const id = vessel.mmsi || key;
+            let entry = anchorOther.get(id);
+            if (!entry) entry = { position: null, track: [] };
+            entry.position = { latitude: p.latitude, longitude: p.longitude };
+            upsertTrack(entry.track, entry.position, 20);
+            nextOther.set(id, entry);
+        }
+        anchorOther = nextOther;
+    }
+
+    redrawAnchorOverlay();
 }
 
 /**
@@ -331,6 +618,7 @@ function connectWebSocket() {
                 type: "subscribe",
                 entities: [
                     ...Object.keys(SENSOR_MAP),
+                    HA_DATETIME_ENTITY,
                     ...SAIL_SELECT_ENTITIES,
                     TOGGLE_ENTITY,
                 ],
@@ -363,10 +651,14 @@ function handleWSMessage(msg) {
     if (msg.type === "state_changed") {
         // Real-time state change from HA — msg.data is the full new_state object
         if (msg.data && msg.data.entity_id && msg.data.state !== undefined) {
-            handleStateUpdate(msg.data.entity_id, String(msg.data.state));
+            handleStateUpdate(
+                msg.data.entity_id,
+                String(msg.data.state),
+                msg.data.attributes,
+            );
         } else if (msg.entity_id && msg.state !== undefined) {
             // Fallback for simple format
-            handleStateUpdate(msg.entity_id, String(msg.state));
+            handleStateUpdate(msg.entity_id, String(msg.state), null);
         }
     } else if (msg.type === "states") {
         // Bulk state response — msg.data is an array of full HA state objects
@@ -374,9 +666,24 @@ function handleWSMessage(msg) {
             console.log(`[WS] Received bulk states: ${msg.data.length} entities`);
             for (const entity of msg.data) {
                 if (entity.entity_id && entity.state !== undefined) {
-                    handleStateUpdate(entity.entity_id, String(entity.state));
+                    handleStateUpdate(
+                        entity.entity_id,
+                        String(entity.state),
+                        entity.attributes,
+                    );
                 }
             }
+        }
+    } else if (msg.type === "signalk_status") {
+        pushWasmStringExport("update_anchor_status", msg.message || "SignalK status");
+        if (msg.state === "not_found") {
+            pushWasmStringExport("update_anchor_info", "SignalK app not detected");
+        }
+    } else if (msg.type === "signalk_data") {
+        ingestSignalKData(msg);
+    } else if (msg.type === "anchor_action_result") {
+        if (!msg.ok) {
+            pushWasmStringExport("update_anchor_status", `Action failed: ${msg.error || "unknown"}`);
         }
     }
 }
@@ -407,6 +714,7 @@ async function main() {
                 js_get_time: js_get_time,
                 js_sail_config_changed: js_sail_config_changed,
                 js_sail_toggle_changed: js_sail_toggle_changed,
+                js_anchor_action: js_anchor_action,
             },
         };
 
