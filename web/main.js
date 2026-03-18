@@ -26,10 +26,19 @@ let lastTime = 0;
 let ws = null;
 
 const NAV_WIDTH = 128;
-const ANCHOR_MAP_W = DISPLAY_W - NAV_WIDTH - 40;
-const ANCHOR_MAP_H = DISPLAY_H - 40;
+const PAGE_TITLE_H = 48;
+const ANCHOR_CTRL_H = 120;
+const ANCHOR_MAP_W = DISPLAY_W - NAV_WIDTH;
+const ANCHOR_MAP_H = DISPLAY_H - PAGE_TITLE_H - ANCHOR_CTRL_H;
 const ANCHOR_CENTER_X = Math.round(ANCHOR_MAP_W / 2);
-const ANCHOR_CENTER_Y = Math.round(ANCHOR_MAP_H / 2 - 36);
+const ANCHOR_CENTER_Y = Math.round(ANCHOR_MAP_H / 2);
+
+const ANCHOR_CONN_ESTABLISH = 0;
+const ANCHOR_CONN_STREAMING = 1;
+const ANCHOR_CONN_STALE = 2;
+const ANCHOR_NO_DATA_GRACE_MS = 3_000;
+const ANCHOR_NO_DATA_TIMEOUT_MS = 60_000;
+const ANCHOR_LOADER_ROTATE_DEG_PER_SEC = 40;
 
 let anchorZoomMeters = 1;
 let anchorAlarmRadiusMeters = 60;
@@ -38,6 +47,13 @@ let anchorSelfPos = null;
 let anchorWindDirRad = null;
 let anchorSelfTrack = [];
 let anchorOther = new Map();
+let anchorStatusState = "detecting";
+let anchorStatusMessage = "Detecting SignalK...";
+let anchorLastDataAt = 0;
+let anchorAlertSinceAt = 0;
+let anchorConnectionUiState = ANCHOR_CONN_ESTABLISH;
+let anchorStatusShown = "";
+let anchorLoaderRotationDeg10 = 0;
 
 // Sensor entity ID → WASM sensor_id mapping
 const SENSOR_MAP = {
@@ -453,6 +469,48 @@ function redrawAnchorOverlay() {
     }
 }
 
+function setAnchorStatusText(message) {
+    if (!message || message === anchorStatusShown) return;
+    pushWasmStringExport("update_anchor_status", message);
+    anchorStatusShown = message;
+}
+
+function setAnchorConnectionState(nextState) {
+    if (!wasm || anchorConnectionUiState === nextState) return;
+    anchorConnectionUiState = nextState;
+    wasm.instance.exports.update_anchor_connection_state(nextState);
+}
+
+function updateAnchorConnectionUi(now = performance.now()) {
+    if (!wasm) return;
+
+    if (anchorStatusState !== "connected") {
+        anchorAlertSinceAt = 0;
+        setAnchorStatusText(anchorStatusMessage || "Detecting SignalK...");
+        setAnchorConnectionState(ANCHOR_CONN_ESTABLISH);
+        return;
+    }
+
+    if (anchorLastDataAt > 0 && (now - anchorLastDataAt) <= ANCHOR_NO_DATA_GRACE_MS) {
+        anchorAlertSinceAt = 0;
+        setAnchorConnectionState(ANCHOR_CONN_STREAMING);
+        return;
+    }
+
+    if (anchorAlertSinceAt === 0) {
+        anchorAlertSinceAt = now;
+    }
+
+    const staleMs = now - anchorAlertSinceAt;
+    if (staleMs < ANCHOR_NO_DATA_TIMEOUT_MS) {
+        setAnchorStatusText("No SignalK data incoming");
+        setAnchorConnectionState(ANCHOR_CONN_STALE);
+    } else {
+        setAnchorStatusText("Re-establishing SignalK connection...");
+        setAnchorConnectionState(ANCHOR_CONN_ESTABLISH);
+    }
+}
+
 function upsertTrack(track, pos, maxSize) {
     const last = track[track.length - 1];
     if (!last || last.latitude !== pos.latitude || last.longitude !== pos.longitude) {
@@ -465,6 +523,10 @@ function upsertTrack(track, pos, maxSize) {
 
 function ingestSignalKData(data) {
     if (!data || !data.self) return;
+
+    anchorStatusState = "connected";
+    anchorStatusMessage = "SignalK connected";
+    anchorLastDataAt = performance.now();
 
     const self = data.self;
     const nav = self.navigation || {};
@@ -531,6 +593,13 @@ function frame(timestamp) {
 
     // Advance LVGL
     wasm.instance.exports.tick(Math.round(dt));
+
+    updateAnchorConnectionUi(timestamp);
+    if (anchorConnectionUiState === ANCHOR_CONN_STREAMING) {
+        const deg = (dt * ANCHOR_LOADER_ROTATE_DEG_PER_SEC) / 1000;
+        anchorLoaderRotationDeg10 = (anchorLoaderRotationDeg10 + Math.round(deg * 10)) % 3600;
+        wasm.instance.exports.update_anchor_loader_rotation(anchorLoaderRotationDeg10);
+    }
 
     // Read framebuffer from WASM memory and blit to canvas
     const fbPtr = wasm.instance.exports.get_framebuffer();
@@ -675,15 +744,16 @@ function handleWSMessage(msg) {
             }
         }
     } else if (msg.type === "signalk_status") {
-        pushWasmStringExport("update_anchor_status", msg.message || "SignalK status");
-        if (msg.state === "not_found") {
-            pushWasmStringExport("update_anchor_info", "SignalK app not detected");
-        }
+        anchorStatusState = msg.state || "detecting";
+        anchorStatusMessage = msg.message || "SignalK status";
+        setAnchorStatusText(anchorStatusMessage);
+        updateAnchorConnectionUi();
     } else if (msg.type === "signalk_data") {
         ingestSignalKData(msg);
+        updateAnchorConnectionUi();
     } else if (msg.type === "anchor_action_result") {
         if (!msg.ok) {
-            pushWasmStringExport("update_anchor_status", `Action failed: ${msg.error || "unknown"}`);
+            setAnchorStatusText(`Action failed: ${msg.error || "unknown"}`);
         }
     }
 }
@@ -729,6 +799,8 @@ async function main() {
 
         // Initialize LVGL + dashboard
         wasm.instance.exports.init(DISPLAY_W, DISPLAY_H);
+        setAnchorStatusText(anchorStatusMessage);
+        updateAnchorConnectionUi();
 
         // Set up input handling
         setupInput();

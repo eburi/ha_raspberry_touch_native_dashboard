@@ -24,6 +24,14 @@ extern const tabler_icon_dsc_t tabler_icon_sailboat_S;
 extern const tabler_icon_dsc_t tabler_icon_sailboat_P;
 extern const tabler_icon_dsc_t tabler_icon_sailboat_L;
 extern const tabler_icon_dsc_t tabler_icon_sailboat_N;
+extern const tabler_icon_dsc_t tabler_icon_loader_2_S;
+extern const tabler_icon_dsc_t tabler_icon_loader_2_P;
+extern const tabler_icon_dsc_t tabler_icon_loader_2_L;
+extern const tabler_icon_dsc_t tabler_icon_loader_2_N;
+extern const tabler_icon_dsc_t tabler_icon_alert_square_rounded_S;
+extern const tabler_icon_dsc_t tabler_icon_alert_square_rounded_P;
+extern const tabler_icon_dsc_t tabler_icon_alert_square_rounded_L;
+extern const tabler_icon_dsc_t tabler_icon_alert_square_rounded_N;
 
 typedef struct {
     const char *name;

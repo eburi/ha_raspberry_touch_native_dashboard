@@ -102,11 +102,15 @@ const ANCHOR_MAX_OTHER = 6;
 const ANCHOR_OTHER_TRACK_POINTS = 20;
 
 var anchor_root: ?*lv.lv_obj_t = null;
+var anchor_controls_bar: ?*lv.lv_obj_t = null;
+var anchor_connection_screen: ?*lv.lv_obj_t = null;
+var anchor_connection_title: ?*lv.lv_obj_t = null;
+var anchor_connection_status: ?*lv.lv_obj_t = null;
+var anchor_data_icon: ?*lv.lv_obj_t = null;
 var anchor_map: ?*lv.lv_obj_t = null;
 var anchor_ring: ?*lv.lv_obj_t = null;
 var anchor_icon: ?*lv.lv_obj_t = null;
 var anchor_boat: ?*lv.lv_obj_t = null;
-var anchor_status: ?*lv.lv_obj_t = null;
 var anchor_info: ?*lv.lv_obj_t = null;
 var anchor_zoom_lbl: ?*lv.lv_obj_t = null;
 var anchor_action_btn_label: ?*lv.lv_obj_t = null;
@@ -116,6 +120,10 @@ var anchor_line_dots: [ANCHOR_LINE_POINTS]?*lv.lv_obj_t = .{null} ** ANCHOR_LINE
 var anchor_track_dots: [ANCHOR_TRACK_POINTS]?*lv.lv_obj_t = .{null} ** ANCHOR_TRACK_POINTS;
 var anchor_other_boats: [ANCHOR_MAX_OTHER]?*lv.lv_obj_t = .{null} ** ANCHOR_MAX_OTHER;
 var anchor_other_tracks: [ANCHOR_MAX_OTHER][ANCHOR_OTHER_TRACK_POINTS]?*lv.lv_obj_t = [_][ANCHOR_OTHER_TRACK_POINTS]?*lv.lv_obj_t{.{null} ** ANCHOR_OTHER_TRACK_POINTS} ** ANCHOR_MAX_OTHER;
+
+const ANCHOR_CONN_ESTABLISH: i32 = 0;
+const ANCHOR_CONN_STREAMING: i32 = 1;
+const ANCHOR_CONN_STALE: i32 = 2;
 
 const ANCHOR_ACTION_RADIUS_DEC = "radius_dec";
 const ANCHOR_ACTION_RADIUS_INC = "radius_inc";
@@ -190,6 +198,16 @@ pub fn create() void {
 
     // Show the first page
     showPage(PAGE_LOGBOOK);
+}
+
+export fn update_anchor_connection_state(state: i32) void {
+    setAnchorConnectionUi(state);
+}
+
+export fn update_anchor_loader_rotation(deg10: i32) void {
+    if (anchor_data_icon) |icon| {
+        lv.lv_image_set_rotation(icon, deg10);
+    }
 }
 
 // ============================================================
@@ -335,7 +353,7 @@ fn createPages(parent: ?*lv.lv_obj_t) void {
         lv.lv_obj_set_style_bg_opa(container, lv.LV_OPA_TRANSP, lv.LV_PART_MAIN);
         lv.lv_obj_set_style_border_width(container, 0, lv.LV_PART_MAIN);
         lv.lv_obj_set_style_radius(container, 0, lv.LV_PART_MAIN);
-        lv.lv_obj_set_style_pad_all(container, 20, lv.LV_PART_MAIN);
+        lv.lv_obj_set_style_pad_all(container, if (i == PAGE_ANCHOR) 0 else 20, lv.LV_PART_MAIN);
         lv.lv_obj_remove_flag(container, lv.LV_OBJ_FLAG_SCROLLABLE);
 
         // Start hidden (showPage will reveal the active one)
@@ -648,23 +666,37 @@ fn createCardRow(parent: ?*lv.lv_obj_t, y_offset: i32, row_h: i32, gap: i32) ?*l
 fn createAnchorPage(parent: ?*lv.lv_obj_t) void {
     if (parent == null) return;
 
+    createPageTitle(parent, "Anchor Alarm", PAGE_ANCHOR);
+
+    const data_icon = lv.lv_image_create(parent);
+    if (data_icon) |im| {
+        anchor_data_icon = im;
+        lv.lv_image_set_src(im, &lv.tabler_icon_loader_2_P);
+        lv.lv_obj_set_style_image_recolor(im, lv.lv_color_hex(COL_ACCENT_2), lv.LV_PART_MAIN);
+        lv.lv_obj_set_style_image_recolor_opa(im, lv.LV_OPA_COVER, lv.LV_PART_MAIN);
+        lv.lv_obj_align(im, lv.LV_ALIGN_TOP_RIGHT, -2, 4);
+        lv.lv_obj_add_flag(im, lv.LV_OBJ_FLAG_HIDDEN);
+    }
+
     const root = lv.lv_obj_create(parent);
     if (root == null) return;
     anchor_root = root;
 
-    lv.lv_obj_set_size(root, @intCast(page_w - 40), @intCast(screen_h - 40));
-    lv.lv_obj_align(root, lv.LV_ALIGN_TOP_LEFT, 0, 0);
-    lv.lv_obj_set_style_bg_color(root, lv.lv_color_hex(0x000000), lv.LV_PART_MAIN);
+    const root_h: i32 = @intCast(screen_h - PAGE_TITLE_H);
+    lv.lv_obj_set_size(root, @intCast(page_w), root_h);
+    lv.lv_obj_align(root, lv.LV_ALIGN_TOP_LEFT, 0, PAGE_TITLE_H);
+    lv.lv_obj_set_style_bg_color(root, lv.lv_color_hex(COL_BG_DARK), lv.LV_PART_MAIN);
     lv.lv_obj_set_style_bg_opa(root, lv.LV_OPA_COVER, lv.LV_PART_MAIN);
     lv.lv_obj_set_style_radius(root, 0, lv.LV_PART_MAIN);
     lv.lv_obj_set_style_border_width(root, 0, lv.LV_PART_MAIN);
     lv.lv_obj_set_style_pad_all(root, 0, lv.LV_PART_MAIN);
     lv.lv_obj_remove_flag(root, lv.LV_OBJ_FLAG_SCROLLABLE);
 
+    const map_h: i32 = root_h - 120;
     const map = lv.lv_obj_create(root);
     if (map == null) return;
     anchor_map = map;
-    lv.lv_obj_set_size(map, lv.LV_PCT(100), lv.LV_PCT(100));
+    lv.lv_obj_set_size(map, lv.LV_PCT(100), map_h);
     lv.lv_obj_align(map, lv.LV_ALIGN_TOP_LEFT, 0, 0);
     lv.lv_obj_set_style_bg_color(map, lv.lv_color_hex(0x000000), lv.LV_PART_MAIN);
     lv.lv_obj_set_style_bg_opa(map, lv.LV_OPA_COVER, lv.LV_PART_MAIN);
@@ -681,7 +713,7 @@ fn createAnchorPage(parent: ?*lv.lv_obj_t) void {
         lv.lv_obj_set_style_border_width(r, 2, lv.LV_PART_MAIN);
         lv.lv_obj_set_style_border_color(r, lv.lv_color_hex(0x3CAEA3), lv.LV_PART_MAIN);
         lv.lv_obj_set_style_radius(r, 190, lv.LV_PART_MAIN);
-        lv.lv_obj_align(r, lv.LV_ALIGN_CENTER, 0, -36);
+        lv.lv_obj_align(r, lv.LV_ALIGN_CENTER, 0, 0);
     }
 
     // Anchor icon in map center (minus navbar by page layout).
@@ -691,7 +723,7 @@ fn createAnchorPage(parent: ?*lv.lv_obj_t) void {
         lv.lv_image_set_src(im, &lv.tabler_icon_anchor_S);
         lv.lv_obj_set_style_image_recolor(im, lv.lv_color_hex(0xFFD166), lv.LV_PART_MAIN);
         lv.lv_obj_set_style_image_recolor_opa(im, lv.LV_OPA_COVER, lv.LV_PART_MAIN);
-        lv.lv_obj_align(im, lv.LV_ALIGN_CENTER, 0, -36);
+        lv.lv_obj_align(im, lv.LV_ALIGN_CENTER, 0, 0);
     }
 
     const boat_img = lv.lv_image_create(map);
@@ -756,45 +788,39 @@ fn createAnchorPage(parent: ?*lv.lv_obj_t) void {
         }
     }
 
-    // Floating title/status overlay
-    const overlay = lv.lv_obj_create(root);
-    if (overlay) |ov| {
-        lv.lv_obj_set_size(ov, lv.LV_PCT(100), 84);
-        lv.lv_obj_align(ov, lv.LV_ALIGN_TOP_LEFT, 0, 0);
-        lv.lv_obj_set_style_bg_color(ov, lv.lv_color_hex(0x000000), lv.LV_PART_MAIN);
-        lv.lv_obj_set_style_bg_opa(ov, lv.LV_OPA_50, lv.LV_PART_MAIN);
-        lv.lv_obj_set_style_border_width(ov, 0, lv.LV_PART_MAIN);
-        lv.lv_obj_set_style_pad_left(ov, 14, lv.LV_PART_MAIN);
-        lv.lv_obj_set_style_pad_right(ov, 14, lv.LV_PART_MAIN);
-        lv.lv_obj_set_style_pad_top(ov, 10, lv.LV_PART_MAIN);
-        lv.lv_obj_set_style_pad_bottom(ov, 8, lv.LV_PART_MAIN);
-        lv.lv_obj_set_flex_flow(ov, lv.LV_FLEX_FLOW_COLUMN);
-        lv.lv_obj_set_flex_align(ov, lv.LV_FLEX_ALIGN_START, lv.LV_FLEX_ALIGN_START, lv.LV_FLEX_ALIGN_START);
-        lv.lv_obj_remove_flag(ov, lv.LV_OBJ_FLAG_SCROLLABLE);
+    createAnchorControls(root);
 
-        const title = lv.lv_label_create(ov);
-        if (title) |t| {
-            lv.lv_label_set_text(t, "Anchor Alarm");
-            lv.lv_obj_set_style_text_color(t, lv.lv_color_hex(0xF8F9FA), lv.LV_PART_MAIN);
-            lv.lv_obj_set_style_text_font(t, lv.lv_font_montserrat_24, lv.LV_PART_MAIN);
+    const conn = lv.lv_obj_create(root);
+    if (conn) |cs| {
+        anchor_connection_screen = cs;
+        lv.lv_obj_set_size(cs, lv.LV_PCT(100), map_h);
+        lv.lv_obj_align(cs, lv.LV_ALIGN_TOP_LEFT, 0, 0);
+        lv.lv_obj_set_style_bg_color(cs, lv.lv_color_hex(COL_BG_DARK), lv.LV_PART_MAIN);
+        lv.lv_obj_set_style_bg_opa(cs, lv.LV_OPA_COVER, lv.LV_PART_MAIN);
+        lv.lv_obj_set_style_border_width(cs, 0, lv.LV_PART_MAIN);
+        lv.lv_obj_set_style_pad_all(cs, 0, lv.LV_PART_MAIN);
+        lv.lv_obj_set_flex_flow(cs, lv.LV_FLEX_FLOW_COLUMN);
+        lv.lv_obj_set_flex_align(cs, lv.LV_FLEX_ALIGN_CENTER, lv.LV_FLEX_ALIGN_CENTER, lv.LV_FLEX_ALIGN_CENTER);
+        lv.lv_obj_set_style_pad_row(cs, 10, lv.LV_PART_MAIN);
+        lv.lv_obj_remove_flag(cs, lv.LV_OBJ_FLAG_SCROLLABLE);
+
+        anchor_connection_title = lv.lv_label_create(cs);
+        if (anchor_connection_title) |lbl| {
+            lv.lv_label_set_text(lbl, "Status");
+            lv.lv_obj_set_style_text_color(lbl, lv.lv_color_hex(COL_TEXT_DIM), lv.LV_PART_MAIN);
+            lv.lv_obj_set_style_text_font(lbl, lv.lv_font_montserrat_20, lv.LV_PART_MAIN);
         }
 
-        anchor_status = lv.lv_label_create(ov);
-        if (anchor_status) |s| {
-            lv.lv_label_set_text(s, "Detecting SignalK...");
-            lv.lv_obj_set_style_text_color(s, lv.lv_color_hex(0xE9C46A), lv.LV_PART_MAIN);
-            lv.lv_obj_set_style_text_font(s, lv.lv_font_montserrat_16, lv.LV_PART_MAIN);
-        }
-
-        anchor_info = lv.lv_label_create(ov);
-        if (anchor_info) |s| {
-            lv.lv_label_set_text(s, "Distance -- m");
-            lv.lv_obj_set_style_text_color(s, lv.lv_color_hex(0xB0BEC5), lv.LV_PART_MAIN);
-            lv.lv_obj_set_style_text_font(s, lv.lv_font_montserrat_14, lv.LV_PART_MAIN);
+        anchor_connection_status = lv.lv_label_create(cs);
+        if (anchor_connection_status) |lbl| {
+            lv.lv_label_set_text(lbl, "Detecting SignalK...");
+            lv.lv_obj_set_style_text_color(lbl, lv.lv_color_hex(COL_TEXT), lv.LV_PART_MAIN);
+            lv.lv_obj_set_style_text_font(lbl, lv.lv_font_montserrat_24, lv.LV_PART_MAIN);
         }
     }
 
-    createAnchorControls(root);
+    anchor_info = null;
+    setAnchorConnectionUi(ANCHOR_CONN_ESTABLISH);
 }
 
 const ANCHOR_BTN_RADIUS_DEC: usize = 1;
@@ -808,11 +834,12 @@ fn createAnchorControls(parent: ?*lv.lv_obj_t) void {
 
     const bar = lv.lv_obj_create(parent);
     if (bar == null) return;
+    anchor_controls_bar = bar;
 
     lv.lv_obj_set_size(bar, lv.LV_PCT(100), 120);
     lv.lv_obj_align(bar, lv.LV_ALIGN_BOTTOM_MID, 0, 0);
-    lv.lv_obj_set_style_bg_color(bar, lv.lv_color_hex(0x000000), lv.LV_PART_MAIN);
-    lv.lv_obj_set_style_bg_opa(bar, lv.LV_OPA_50, lv.LV_PART_MAIN);
+    lv.lv_obj_set_style_bg_color(bar, lv.lv_color_hex(COL_BG_DARK), lv.LV_PART_MAIN);
+    lv.lv_obj_set_style_bg_opa(bar, lv.LV_OPA_COVER, lv.LV_PART_MAIN);
     lv.lv_obj_set_style_border_width(bar, 0, lv.LV_PART_MAIN);
     lv.lv_obj_set_style_pad_left(bar, 10, lv.LV_PART_MAIN);
     lv.lv_obj_set_style_pad_right(bar, 10, lv.LV_PART_MAIN);
@@ -862,17 +889,17 @@ fn createAnchorBtn(parent: ?*lv.lv_obj_t, text: [*:0]const u8, width: i32, id: u
 
     lv.lv_obj_set_size(btn, width, 100);
     lv.lv_obj_set_style_radius(btn, 10, lv.LV_PART_MAIN);
-    lv.lv_obj_set_style_bg_color(btn, lv.lv_color_hex(0x1E1E1E), lv.LV_PART_MAIN);
+    lv.lv_obj_set_style_bg_color(btn, lv.lv_color_hex(COL_CARD_BG), lv.LV_PART_MAIN);
     lv.lv_obj_set_style_bg_opa(btn, lv.LV_OPA_COVER, lv.LV_PART_MAIN);
     lv.lv_obj_set_style_border_width(btn, 2, lv.LV_PART_MAIN);
-    lv.lv_obj_set_style_border_color(btn, lv.lv_color_hex(0x4F5D75), lv.LV_PART_MAIN);
+    lv.lv_obj_set_style_border_color(btn, lv.lv_color_hex(COL_ACCENT_1), lv.LV_PART_MAIN);
     lv.lv_obj_set_style_shadow_width(btn, 0, lv.LV_PART_MAIN);
 
     const lbl = lv.lv_label_create(btn);
     var out: ?*lv.lv_obj_t = null;
     if (lbl) |l| {
         lv.lv_label_set_text(l, text);
-        lv.lv_obj_set_style_text_color(l, lv.lv_color_hex(0xF4F1DE), lv.LV_PART_MAIN);
+        lv.lv_obj_set_style_text_color(l, lv.lv_color_hex(COL_TEXT_DIM), lv.LV_PART_MAIN);
         lv.lv_obj_set_style_text_font(l, lv.lv_font_montserrat_28, lv.LV_PART_MAIN);
         lv.lv_obj_center(l);
         if (keep_label) out = l;
@@ -895,6 +922,32 @@ fn anchorButtonCb(e: ?*lv.lv_event_t) callconv(.C) void {
         ANCHOR_BTN_ZOOM_DEC => js_anchor_action(ANCHOR_ACTION_ZOOM_DEC.ptr, ANCHOR_ACTION_ZOOM_DEC.len, 0),
         ANCHOR_BTN_ZOOM_INC => js_anchor_action(ANCHOR_ACTION_ZOOM_INC.ptr, ANCHOR_ACTION_ZOOM_INC.len, 0),
         else => {},
+    }
+}
+
+fn setAnchorConnectionUi(state: i32) void {
+    if (anchor_data_icon) |icon| {
+        if (state == ANCHOR_CONN_STREAMING) {
+            lv.lv_image_set_src(icon, &lv.tabler_icon_loader_2_P);
+            lv.lv_obj_set_style_image_recolor(icon, lv.lv_color_hex(COL_ACCENT_2), lv.LV_PART_MAIN);
+            lv.lv_obj_remove_flag(icon, lv.LV_OBJ_FLAG_HIDDEN);
+        } else if (state == ANCHOR_CONN_STALE) {
+            lv.lv_image_set_src(icon, &lv.tabler_icon_alert_square_rounded_P);
+            lv.lv_obj_set_style_image_recolor(icon, lv.lv_color_hex(COL_ACCENT_2), lv.LV_PART_MAIN);
+            lv.lv_obj_remove_flag(icon, lv.LV_OBJ_FLAG_HIDDEN);
+        } else {
+            lv.lv_obj_add_flag(icon, lv.LV_OBJ_FLAG_HIDDEN);
+        }
+    }
+
+    if (state == ANCHOR_CONN_ESTABLISH) {
+        if (anchor_connection_screen) |obj| lv.lv_obj_remove_flag(obj, lv.LV_OBJ_FLAG_HIDDEN);
+        if (anchor_map) |obj| lv.lv_obj_add_flag(obj, lv.LV_OBJ_FLAG_HIDDEN);
+        if (anchor_controls_bar) |obj| lv.lv_obj_add_flag(obj, lv.LV_OBJ_FLAG_HIDDEN);
+    } else {
+        if (anchor_connection_screen) |obj| lv.lv_obj_add_flag(obj, lv.LV_OBJ_FLAG_HIDDEN);
+        if (anchor_map) |obj| lv.lv_obj_remove_flag(obj, lv.LV_OBJ_FLAG_HIDDEN);
+        if (anchor_controls_bar) |obj| lv.lv_obj_remove_flag(obj, lv.LV_OBJ_FLAG_HIDDEN);
     }
 }
 
@@ -1245,7 +1298,7 @@ export fn update_code0(value_ptr: [*]const u8, value_len: i32) void {
 
 export fn update_anchor_status(value_ptr: [*]const u8, value_len: i32) void {
     _ = value_len;
-    if (anchor_status) |lbl| {
+    if (anchor_connection_status) |lbl| {
         lv.lv_label_set_text(lbl, @ptrCast(value_ptr));
     }
 }
@@ -1274,7 +1327,7 @@ export fn update_anchor_ring_px(diameter_px: i32) void {
         const d = std.math.clamp(diameter_px, 40, 1200);
         lv.lv_obj_set_size(ring, d, d);
         lv.lv_obj_set_style_radius(ring, @divTrunc(d, 2), lv.LV_PART_MAIN);
-        lv.lv_obj_align(ring, lv.LV_ALIGN_CENTER, 0, -36);
+        lv.lv_obj_align(ring, lv.LV_ALIGN_CENTER, 0, 0);
     }
 }
 

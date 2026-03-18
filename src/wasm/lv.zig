@@ -140,6 +140,7 @@ pub const lv_button_create = c.lv_button_create;
 // --- Image ---
 pub const lv_image_create = if (@hasDecl(c, "lv_image_create")) c.lv_image_create else c.lv_img_create;
 pub const lv_image_set_src = if (@hasDecl(c, "lv_image_set_src")) c.lv_image_set_src else c.lv_img_set_src;
+pub const lv_image_set_rotation = if (@hasDecl(c, "lv_image_set_rotation")) c.lv_image_set_rotation else c.lv_img_set_angle;
 
 // --- Switch ---
 pub const lv_switch_create = c.lv_switch_create;
@@ -255,6 +256,14 @@ pub extern const tabler_icon_sailboat_S: anyopaque;
 pub extern const tabler_icon_sailboat_P: anyopaque;
 pub extern const tabler_icon_sailboat_L: anyopaque;
 pub extern const tabler_icon_sailboat_N: anyopaque;
+pub extern const tabler_icon_loader_2_S: anyopaque;
+pub extern const tabler_icon_loader_2_P: anyopaque;
+pub extern const tabler_icon_loader_2_L: anyopaque;
+pub extern const tabler_icon_loader_2_N: anyopaque;
+pub extern const tabler_icon_alert_square_rounded_S: anyopaque;
+pub extern const tabler_icon_alert_square_rounded_P: anyopaque;
+pub extern const tabler_icon_alert_square_rounded_L: anyopaque;
+pub extern const tabler_icon_alert_square_rounded_N: anyopaque;
 
 // --- Palette ---
 pub const LV_PALETTE_BLUE = c.LV_PALETTE_BLUE;

@@ -5,3 +5,5 @@
 api-book
 anchor
 sailboat
+loader-2
+alert-square-rounded
