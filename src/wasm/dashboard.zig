@@ -161,23 +161,30 @@ fn createNavBar(parent: ?*lv.lv_obj_t) void {
     lv.lv_obj_set_flex_flow(bar, lv.LV_FLEX_FLOW_COLUMN);
     lv.lv_obj_set_flex_align(bar, lv.LV_FLEX_ALIGN_SPACE_EVENLY, lv.LV_FLEX_ALIGN_CENTER, lv.LV_FLEX_ALIGN_CENTER);
 
-    // Nav buttons with FontAwesome 6 icons
-    // FA_BOOK      = book icon        (Logbook)
-    // FA_ANCHOR    = anchor icon      (Anchor Alarm)
-    // FA_SAILBOAT  = sailboat icon    (Sails)
-    const icons = [PAGE_COUNT][*:0]const u8{
-        lv.FA_BOOK,
-        lv.FA_ANCHOR,
-        lv.FA_SAILBOAT,
-    };
     const page_indices = [PAGE_COUNT]usize{ PAGE_LOGBOOK, PAGE_ANCHOR, PAGE_SAILS };
 
     for (0..PAGE_COUNT) |i| {
-        nav_buttons[i] = createNavButton(bar, icons[i], page_indices[i]);
+        nav_buttons[i] = createNavButton(bar, page_indices[i]);
     }
 }
 
-fn createNavButton(parent: ?*lv.lv_obj_t, icon: [*:0]const u8, page_index: usize) ?*lv.lv_obj_t {
+fn navIconForPage(page_index: usize) [*:0]const u8 {
+    return switch (page_index) {
+        PAGE_LOGBOOK => lv.FA_BOOK,
+        PAGE_ANCHOR => lv.FA_ANCHOR,
+        PAGE_SAILS => lv.FA_SAILBOAT,
+    };
+}
+
+fn titleIconForPage(page_index: usize) [*:0]const u8 {
+    return switch (page_index) {
+        PAGE_LOGBOOK => lv.FA_BOOK,
+        PAGE_ANCHOR => lv.FA_ANCHOR,
+        PAGE_SAILS => lv.FA_SAILBOAT,
+    };
+}
+
+fn createNavButton(parent: ?*lv.lv_obj_t, page_index: usize) ?*lv.lv_obj_t {
     if (parent == null) return null;
 
     const btn = lv.lv_button_create(parent);
@@ -191,13 +198,13 @@ fn createNavButton(parent: ?*lv.lv_obj_t, icon: [*:0]const u8, page_index: usize
     lv.lv_obj_set_style_border_width(btn, 0, lv.LV_PART_MAIN);
     lv.lv_obj_set_style_shadow_width(btn, 0, lv.LV_PART_MAIN);
 
-    // Icon label (using FontAwesome 6 icon font)
-    const label = lv.lv_label_create(btn);
-    if (label) |lbl| {
-        lv.lv_label_set_text(lbl, icon);
-        lv.lv_obj_set_style_text_font(lbl, &lv.fa_icons_28, lv.LV_PART_MAIN);
-        lv.lv_obj_set_style_text_color(lbl, lv.lv_color_hex(COL_TEXT_DIM), lv.LV_PART_MAIN);
-        lv.lv_obj_center(lbl);
+    const icon = navIconForPage(page_index);
+    const lbl = lv.lv_label_create(btn);
+    if (lbl) |label| {
+        lv.lv_label_set_text(label, icon);
+        lv.lv_obj_set_style_text_color(label, lv.lv_color_hex(COL_TEXT_DIM), lv.LV_PART_MAIN);
+        lv.lv_obj_set_style_text_font(label, lv.fa_icons_28, lv.LV_PART_MAIN);
+        lv.lv_obj_center(label);
     }
 
     // Store page index as user_data for the click handler
@@ -240,11 +247,13 @@ fn showPage(index: usize) void {
             if (child) |lbl| {
                 if (i == index) {
                     // Active: bright foreground color + accent background
-                    lv.lv_obj_set_style_text_color(lbl, lv.lv_color_hex(COL_FG), lv.LV_PART_MAIN);
+                    lv.lv_obj_set_style_image_recolor(lbl, lv.lv_color_hex(COL_FG), lv.LV_PART_MAIN);
+                    lv.lv_obj_set_style_image_recolor_opa(lbl, lv.LV_OPA_COVER, lv.LV_PART_MAIN);
                     lv.lv_obj_set_style_bg_color(btn, lv.lv_color_hex(COL_ACCENT_1), lv.LV_PART_MAIN);
                 } else {
                     // Inactive: dim
-                    lv.lv_obj_set_style_text_color(lbl, lv.lv_color_hex(COL_TEXT_DIM), lv.LV_PART_MAIN);
+                    lv.lv_obj_set_style_image_recolor(lbl, lv.lv_color_hex(COL_TEXT_DIM), lv.LV_PART_MAIN);
+                    lv.lv_obj_set_style_image_recolor_opa(lbl, lv.LV_OPA_COVER, lv.LV_PART_MAIN);
                     lv.lv_obj_set_style_bg_color(btn, lv.lv_color_hex(COL_NAV_BG), lv.LV_PART_MAIN);
                 }
             }
@@ -290,8 +299,20 @@ fn createPages(parent: ?*lv.lv_obj_t) void {
 // Page title helper
 // ============================================================
 
-fn createPageTitle(parent: ?*lv.lv_obj_t, text: [*:0]const u8) void {
+fn createPageTitle(parent: ?*lv.lv_obj_t, text: [*:0]const u8, page_index: usize) void {
     if (parent == null) return;
+
+    const icon_src = titleIconForPage(page_index);
+    if (icon_src != null) {
+        const img = lv.lv_image_create(parent);
+        if (img) |im| {
+            lv.lv_image_set_src(im, icon_src);
+            lv.lv_obj_set_style_image_recolor(im, lv.lv_color_hex(COL_ACCENT_2), lv.LV_PART_MAIN);
+            lv.lv_obj_set_style_image_recolor_opa(im, lv.LV_OPA_COVER, lv.LV_PART_MAIN);
+            lv.lv_obj_align(im, lv.LV_ALIGN_TOP_RIGHT, -8, 4);
+        }
+    }
+
     const lbl = lv.lv_label_create(parent);
     if (lbl) |l| {
         lv.lv_label_set_text(l, text);
@@ -359,7 +380,7 @@ fn createSensorCard(
 fn createLogbookPage(parent: ?*lv.lv_obj_t) void {
     if (parent == null) return;
 
-    createPageTitle(parent, "Logbook");
+    createPageTitle(parent, "Logbook", PAGE_LOGBOOK);
 
     // Content area below title
     const content = lv.lv_obj_create(parent);
@@ -431,7 +452,7 @@ fn createCardRow(parent: ?*lv.lv_obj_t, y_offset: i32) ?*lv.lv_obj_t {
 fn createAnchorPage(parent: ?*lv.lv_obj_t) void {
     if (parent == null) return;
 
-    createPageTitle(parent, "Anchor Alarm");
+    createPageTitle(parent, "Anchor Alarm", PAGE_ANCHOR);
 
     // Placeholder content
     const placeholder = lv.lv_label_create(parent);
@@ -450,7 +471,7 @@ fn createAnchorPage(parent: ?*lv.lv_obj_t) void {
 fn createSailsPage(parent: ?*lv.lv_obj_t) void {
     if (parent == null) return;
 
-    createPageTitle(parent, "Sail Configuration");
+    createPageTitle(parent, "Sail Configuration", PAGE_SAILS);
 
     // Content area below title
     const content = lv.lv_obj_create(parent);

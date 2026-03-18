@@ -1,10 +1,10 @@
 #!/usr/bin/env bash
-set -e
+set -euo pipefail
 
 # Deploy lvgl_dashboard HA App to a Home Assistant device.
 #
 # Usage:
-#   ./deploy.sh [user@host]
+#   ./local_deploy.sh [user@host]
 #
 # Default target: root@192.168.46.222
 #
@@ -21,6 +21,18 @@ BUILD_DIR="/tmp/${APP_NAME}_app"
 
 echo "=== Deploying $APP_NAME to $TARGET ==="
 echo "Project dir: $PROJECT_DIR"
+echo ""
+
+# 0. Build locally first; abort deployment on build errors.
+if ! command -v zig >/dev/null 2>&1; then
+    echo "Error: zig is required for local pre-deploy build verification." >&2
+    echo "Install zig locally or run deploy from an environment with zig available." >&2
+    exit 1
+fi
+
+echo "Running local build check (zig build wasm)..."
+zig build wasm -Doptimize=ReleaseSmall
+echo "Local build check passed."
 echo ""
 
 # 1. Assemble the app directory

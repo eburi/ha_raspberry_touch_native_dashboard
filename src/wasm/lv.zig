@@ -112,6 +112,8 @@ pub const lv_obj_set_style_shadow_width = c.lv_obj_set_style_shadow_width;
 pub const lv_obj_set_style_text_align = c.lv_obj_set_style_text_align;
 pub const lv_obj_set_style_text_opa = c.lv_obj_set_style_text_opa;
 pub const lv_obj_set_style_opa = c.lv_obj_set_style_opa;
+pub const lv_obj_set_style_image_recolor = if (@hasDecl(c, "lv_obj_set_style_image_recolor")) c.lv_obj_set_style_image_recolor else c.lv_obj_set_style_img_recolor;
+pub const lv_obj_set_style_image_recolor_opa = if (@hasDecl(c, "lv_obj_set_style_image_recolor_opa")) c.lv_obj_set_style_image_recolor_opa else c.lv_obj_set_style_img_recolor_opa;
 
 // --- Events ---
 pub const lv_obj_add_event_cb = c.lv_obj_add_event_cb;
@@ -134,6 +136,10 @@ pub const LV_LABEL_LONG_SCROLL = c.LV_LABEL_LONG_SCROLL;
 
 // --- Button ---
 pub const lv_button_create = c.lv_button_create;
+
+// --- Image ---
+pub const lv_image_create = if (@hasDecl(c, "lv_image_create")) c.lv_image_create else c.lv_img_create;
+pub const lv_image_set_src = if (@hasDecl(c, "lv_image_set_src")) c.lv_image_set_src else c.lv_img_set_src;
 
 // --- Switch ---
 pub const lv_switch_create = c.lv_switch_create;
@@ -233,8 +239,31 @@ pub const LV_SYMBOL_LEFT = c.LV_SYMBOL_LEFT;
 pub const LV_SYMBOL_RIGHT = c.LV_SYMBOL_RIGHT;
 
 // --- Custom FontAwesome 6 icon fonts (generated via lv_font_conv) ---
-extern const fa_icons_28: lv_font_t;
-extern const fa_icons_20: lv_font_t;
+pub extern const fa_icons_28: lv_font_t;
+pub extern const fa_icons_20: lv_font_t;
+
+// --- Generated Tabler icon assets ---
+pub extern const tabler_icon_api_book_S: [*]const u8;
+pub extern const tabler_icon_api_book_P: [*]const u8;
+pub extern const tabler_icon_api_book_L: [*]const u8;
+pub extern const tabler_icon_anchor_S: [*]const u8;
+pub extern const tabler_icon_anchor_P: [*]const u8;
+pub extern const tabler_icon_anchor_L: [*]const u8;
+pub extern const tabler_icon_sailboat_S: [*]const u8;
+pub extern const tabler_icon_sailboat_P: [*]const u8;
+pub extern const tabler_icon_sailboat_L: [*]const u8;
+
+// Icon pointer arrays for navigation and title icons
+pub const tabler_icon_icons_ptrs: [3][*]const u8 = .{
+    tabler_icon_api_book_P,
+    tabler_icon_anchor_P,
+    tabler_icon_sailboat_P,
+};
+pub const tabler_icon_title_icons_ptrs: [3][*]const u8 = .{
+    tabler_icon_api_book_S,
+    tabler_icon_anchor_S,
+    tabler_icon_sailboat_S,
+};
 
 // FontAwesome 6 icon codepoints (UTF-8 encoded strings for LVGL labels)
 // Nav icons

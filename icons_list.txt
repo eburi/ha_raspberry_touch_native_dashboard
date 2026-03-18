@@ -1,0 +1,7 @@
+# One Tabler icon name per line.
+# Add/remove icons, then run:
+#   tools/install_icons.sh icons_list.txt
+
+api-book
+anchor
+sailboat

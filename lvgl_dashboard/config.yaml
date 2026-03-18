@@ -20,12 +20,11 @@ homeassistant_api: true
 # Device access for native framebuffer + touch input rendering
 devices:
   - /dev/fb0
-  - /dev/input
+  - /dev/input/event0
 
 # Ingress (web UI served through HA proxy)
 ingress: true
 ingress_port: 8765
-ingress_entry: "/"
 panel_icon: "mdi:view-dashboard"
 panel_title: "LVGL Dashboard"
 

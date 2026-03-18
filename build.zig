@@ -4,6 +4,46 @@ pub fn build(b: *std.Build) !void {
     // Shared options (can only call these once)
     const native_target = b.standardTargetOptions(.{});
     const optimize = b.standardOptimizeOption(.{});
+    const zap_dep = b.dependency("zap", .{
+        .target = native_target,
+        .optimize = optimize,
+    });
+
+    // ---------------------------------------------------------------
+    // Tests
+    // ---------------------------------------------------------------
+    const native_tests = b.addTest(.{
+        .root_source_file = b.path("tests/test_main.zig"),
+        .target = native_target,
+        .optimize = optimize,
+    });
+    native_tests.root_module.addImport("probe", b.createModule(.{
+        .root_source_file = b.path("src/native/probe.zig"),
+        .target = native_target,
+        .optimize = optimize,
+    }));
+    native_tests.root_module.addImport("fbdev", b.createModule(.{
+        .root_source_file = b.path("src/native/fbdev.zig"),
+        .target = native_target,
+        .optimize = optimize,
+    }));
+    native_tests.root_module.addImport("evdev", b.createModule(.{
+        .root_source_file = b.path("src/native/evdev.zig"),
+        .target = native_target,
+        .optimize = optimize,
+    }));
+    const ha_client_mod = b.createModule(.{
+        .root_source_file = b.path("src/server/ha_client.zig"),
+        .target = native_target,
+        .optimize = optimize,
+    });
+    ha_client_mod.addImport("zap", zap_dep.module("zap"));
+    native_tests.root_module.addImport("ha_client", ha_client_mod);
+    native_tests.root_module.addImport("zap", zap_dep.module("zap"));
+
+    const run_native_tests = b.addRunArtifact(native_tests);
+    const test_step = b.step("test", "Run native unit tests");
+    test_step.dependOn(&run_native_tests.step);
 
     // ---------------------------------------------------------------
     // WASM target (dashboard.wasm)
@@ -72,6 +112,7 @@ pub fn build(b: *std.Build) !void {
         .files = &.{
             "src/wasm/fa_icons_28.c",
             "src/wasm/fa_icons_20.c",
+            // "src/wasm/generated_icons/tabler_icons.c",
         },
         .flags = &.{
             "-DLV_LVGL_H_INCLUDE_SIMPLE=1",
@@ -96,11 +137,6 @@ pub fn build(b: *std.Build) !void {
     // ---------------------------------------------------------------
     // Only build server for non-WASM native targets
     if (native_target.result.os.tag != .freestanding) {
-        const zap_dep = b.dependency("zap", .{
-            .target = native_target,
-            .optimize = optimize,
-        });
-
         const server_exe = b.addExecutable(.{
             .name = "lvgl-server",
             .root_source_file = b.path("src/server/main.zig"),
