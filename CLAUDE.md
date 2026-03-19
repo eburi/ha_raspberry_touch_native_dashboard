@@ -122,6 +122,16 @@ icons_list.txt               # Icon names for tools/install_icons.py
 
 ## Important Conventions
 
+### Version Bumps
+Every pushed change **must** include a version bump in
+`ha_raspberry_touch_native_dashboard/config.yaml`. Use [Semantic Versioning](https://semver.org/):
+- **MAJOR** (`X.0.0`): Breaking changes (incompatible config, removed features)
+- **MINOR** (`0.X.0`): New features, new user-facing functionality
+- **PATCH** (`0.0.X`): Bug fixes, internal refactors, dependency updates, doc changes
+
+Include the version bump in the same commit as the code change — do not create
+a separate "bump version" commit.
+
 ### Terminology
 - Always say "Home Assistant **App**", never "add-on" or "addon"
 - CLI commands: `ha apps install`, `ha apps start`, `ha apps logs` (not `ha addons`)
