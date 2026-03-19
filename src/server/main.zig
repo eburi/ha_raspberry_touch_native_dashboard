@@ -123,7 +123,6 @@ pub fn main() !void {
     routes.init(allocator);
     signalk_client.init(allocator);
     signalk_client.setBaseUrlOverride(config.signalk_url);
-    signalk_client.setSupervisorToken(config.supervisor_token);
     signalk_client.setBroadcaster(websocket.broadcastRaw);
     ha_client.init(allocator, .{
         .ha_url = config.ha_url,

@@ -36,7 +36,6 @@ var state_file_path: []const u8 = "signalk_auth.json";
 var state_file_path_allocated: bool = false;
 var broadcaster: ?*const fn ([]const u8) void = null;
 var base_url_override: ?[]u8 = null;
-var supervisor_token: ?[]u8 = null;
 
 pub fn setBroadcaster(cb: *const fn ([]const u8) void) void {
     broadcaster = cb;
@@ -60,22 +59,6 @@ pub fn setBaseUrlOverride(maybe_url: ?[]const u8) void {
     if (maybe_url) |url| {
         if (url.len > 0) {
             base_url_override = allocator.dupe(u8, url) catch null;
-        }
-    }
-}
-
-pub fn setSupervisorToken(maybe_token: ?[]const u8) void {
-    persist_mutex.lock();
-    defer persist_mutex.unlock();
-
-    if (supervisor_token) |old| {
-        allocator.free(old);
-        supervisor_token = null;
-    }
-
-    if (maybe_token) |token| {
-        if (token.len > 0) {
-            supervisor_token = allocator.dupe(u8, token) catch null;
         }
     }
 }
@@ -126,7 +109,6 @@ pub fn deinit() void {
     if (persistent.token) |v| allocator.free(v);
     if (persistent.base_url) |v| allocator.free(v);
     if (base_url_override) |v| allocator.free(v);
-    if (supervisor_token) |v| allocator.free(v);
 
     if (state_file_path_allocated) {
         allocator.free(state_file_path);
@@ -321,11 +303,11 @@ fn ensureBaseUrl() ![]u8 {
 
     publishStatus(.detecting, "Detecting SignalK...");
 
-    if (discoverSignalKViaSupervisor()) |url| {
+    if (discoverSignalKViaMdns()) |url| {
         defer allocator.free(url);
         setBaseUrl(url);
         savePersistentState();
-        publishStatus(.requesting, "SignalK detected");
+        publishStatus(.requesting, "SignalK detected via mDNS");
         return allocator.dupe(u8, url);
     }
 
@@ -453,138 +435,253 @@ fn checkSignalKAvailable(base: []const u8) bool {
     return result.len > 0;
 }
 
-fn discoverSignalKViaSupervisor() ?[]u8 {
-    const body = supervisorGet("/apps") catch
-        supervisorGet("/addons") catch |err| {
-        log.debug("Supervisor app/add-on query failed: {}", .{err});
-        return null;
+/// Discover SignalK via mDNS by querying for _signalk-http._tcp.local.
+/// SignalK servers advertise themselves on this service type.
+/// Returns an allocated URL string like "http://172.30.33.4:3000" or null.
+fn discoverSignalKViaMdns() ?[]u8 {
+    const service_types = [_][]const u8{
+        "_signalk-http._tcp.local.",
+        "_signalk-ws._tcp.local.",
     };
-    defer allocator.free(body);
 
-    const parsed = std.json.parseFromSlice(std.json.Value, allocator, body, .{}) catch {
-        return null;
-    };
-    defer parsed.deinit();
-
-    if (parsed.value != .object) return null;
-    const data_v = parsed.value.object.get("data") orelse return null;
-    if (data_v != .object) return null;
-    const entries_v = data_v.object.get("apps") orelse data_v.object.get("addons") orelse return null;
-    if (entries_v != .array) return null;
-
-    for (entries_v.array.items) |entry| {
-        if (entry != .object) continue;
-        const slug_v = entry.object.get("slug") orelse continue;
-        if (slug_v != .string) continue;
-        const slug = slug_v.string;
-        if (!std.mem.endsWith(u8, slug, "_signalk")) continue;
-
-        log.debug("Supervisor candidate SignalK slug: {s}", .{slug});
-
-        const info_body = supervisorGetInfoForSlug(slug) catch |err| {
-            log.debug("Supervisor info query failed for {s}: {}", .{ slug, err });
+    for (service_types) |service| {
+        log.debug("mDNS: querying for {s}", .{service});
+        const result = mdnsQuery(service) catch |err| {
+            log.debug("mDNS query failed for {s}: {}", .{ service, err });
             continue;
         };
-        defer allocator.free(info_body);
 
-        const parsed_info = std.json.parseFromSlice(std.json.Value, allocator, info_body, .{}) catch continue;
-        defer parsed_info.deinit();
-        if (parsed_info.value != .object) continue;
-        const info_data_v = parsed_info.value.object.get("data") orelse continue;
-        if (info_data_v != .object) continue;
+        if (result) |r| {
+            const base = std.fmt.allocPrint(
+                allocator,
+                "http://{d}.{d}.{d}.{d}:{d}",
+                .{ r.addr[0], r.addr[1], r.addr[2], r.addr[3], r.port },
+            ) catch continue;
 
-        const state_v = info_data_v.object.get("state") orelse continue;
-        if (state_v != .string or !std.mem.eql(u8, state_v.string, "started")) continue;
+            if (!checkSignalKAvailable(base)) {
+                log.debug("mDNS-discovered SignalK URL not reachable: {s}", .{base});
+                allocator.free(base);
+                continue;
+            }
 
-        const ip_v = info_data_v.object.get("ip_address") orelse continue;
-        if (ip_v != .string or ip_v.string.len == 0) continue;
-
-        const network_v = info_data_v.object.get("network") orelse continue;
-        if (network_v != .object) continue;
-        if (network_v.object.get("3000/tcp") == null) continue;
-
-        const base = std.fmt.allocPrint(allocator, "http://{s}:3000", .{ip_v.string}) catch continue;
-        if (!checkSignalKAvailable(base)) {
-            log.debug("Supervisor-derived SignalK URL not reachable: {s}", .{base});
-            allocator.free(base);
-            continue;
+            log.info("SignalK discovered via mDNS: {s}", .{base});
+            return base;
         }
-
-        log.info("SignalK discovered via Supervisor: {s}", .{base});
-        return base;
     }
 
     return null;
 }
 
-fn supervisorGetInfoForSlug(slug: []const u8) ![]u8 {
-    const app_path = try std.fmt.allocPrint(allocator, "/apps/{s}/info", .{slug});
-    defer allocator.free(app_path);
+const MdnsResult = struct {
+    addr: [4]u8,
+    port: u16,
+};
 
-    return supervisorGet(app_path) catch {
-        const addon_path = try std.fmt.allocPrint(allocator, "/addons/{s}/info", .{slug});
-        defer allocator.free(addon_path);
-        return supervisorGet(addon_path);
+/// Send an mDNS PTR query and parse the response for A and SRV records.
+fn mdnsQuery(service_name: []const u8) !?MdnsResult {
+    const posix = std.posix;
+
+    const sock = try posix.socket(posix.AF.INET, posix.SOCK.DGRAM, 0);
+    defer posix.close(sock);
+
+    // Set receive timeout to 2 seconds
+    const timeout = posix.timeval{ .sec = 2, .usec = 0 };
+    try posix.setsockopt(sock, posix.SOL.SOCKET, posix.SO.RCVTIMEO, std.mem.asBytes(&timeout));
+
+    // Build DNS query packet for PTR record
+    var query_buf: [512]u8 = undefined;
+    const query_len = buildDnsQuery(&query_buf, service_name) catch |err| {
+        log.debug("mDNS: failed to build query for {s}: {}", .{ service_name, err });
+        return err;
     };
-}
 
-fn supervisorGet(path: []const u8) ![]u8 {
-    const token = getSupervisorToken() orelse return error.NoSupervisorToken;
-    defer allocator.free(token);
-
-    const bearer = try std.fmt.allocPrint(allocator, "Bearer {s}", .{token});
-    defer allocator.free(bearer);
-
-    return supervisorGetWithHeader(path, "Authorization", bearer) catch |auth_err| {
-        log.debug("Supervisor GET failed with Authorization header: {}", .{auth_err});
-        return supervisorGetWithHeader(path, "X-Supervisor-Token", token);
+    // Send to mDNS multicast address 224.0.0.251:5353
+    const mdns_addr = posix.sockaddr.in{
+        .port = std.mem.nativeToBig(u16, 5353),
+        .addr = std.mem.nativeToBig(u32, (224 << 24) | (0 << 16) | (0 << 8) | 251),
     };
-}
 
-fn supervisorGetWithHeader(path: []const u8, header_name: []const u8, header_value: []const u8) ![]u8 {
-    const url = try std.fmt.allocPrint(allocator, "http://supervisor{s}", .{path});
-    defer allocator.free(url);
+    _ = try posix.sendto(sock, query_buf[0..query_len], 0, @ptrCast(&mdns_addr), @sizeOf(posix.sockaddr.in));
 
-    const uri = try std.Uri.parse(url);
-    var client = std.http.Client{ .allocator = allocator };
-    defer client.deinit();
+    // Wait for response(s) — try up to 5 reads within the timeout
+    var i: usize = 0;
+    while (i < 5) : (i += 1) {
+        var resp_buf: [4096]u8 = undefined;
+        const resp_len = posix.recvfrom(sock, &resp_buf, 0, null, null) catch |err| {
+            if (err == error.WouldBlock) break; // timeout
+            return err;
+        };
+        if (resp_len < 12) continue;
 
-    var header_buf: [8192]u8 = undefined;
-    var req = try client.open(.GET, uri, .{
-        .server_header_buffer = &header_buf,
-        .extra_headers = &.{.{ .name = header_name, .value = header_value }},
-    });
-    defer req.deinit();
-
-    try req.send();
-    try req.finish();
-    try req.wait();
-
-    if (req.response.status != .ok) {
-        log.debug(
-            "Supervisor GET {s} via header {s} failed with status {}",
-            .{ path, header_name, req.response.status },
-        );
-        return error.HttpError;
+        if (parseMdnsResponse(resp_buf[0..resp_len])) |result| {
+            return result;
+        }
     }
 
-    var out = std.ArrayList(u8).init(allocator);
-    errdefer out.deinit();
-
-    var buf: [4096]u8 = undefined;
-    while (true) {
-        const n = try req.reader().read(&buf);
-        if (n == 0) break;
-        try out.appendSlice(buf[0..n]);
-    }
-
-    return out.toOwnedSlice();
+    return null;
 }
 
-fn getSupervisorToken() ?[]u8 {
-    persist_mutex.lock();
-    defer persist_mutex.unlock();
-    if (supervisor_token) |v| return allocator.dupe(u8, v) catch null;
+/// Build a DNS PTR query packet for the given service name.
+fn buildDnsQuery(buf: []u8, name: []const u8) !usize {
+    if (buf.len < 12 + name.len + 2 + 4) return error.BufferTooSmall;
+
+    var pos: usize = 0;
+
+    // Transaction ID
+    buf[pos] = 0x00;
+    buf[pos + 1] = 0x00;
+    pos += 2;
+    // Flags: standard query
+    buf[pos] = 0x00;
+    buf[pos + 1] = 0x00;
+    pos += 2;
+    // Questions: 1
+    buf[pos] = 0x00;
+    buf[pos + 1] = 0x01;
+    pos += 2;
+    // Answer/Authority/Additional RRs: 0
+    buf[pos] = 0x00;
+    buf[pos + 1] = 0x00;
+    pos += 2;
+    buf[pos] = 0x00;
+    buf[pos + 1] = 0x00;
+    pos += 2;
+    buf[pos] = 0x00;
+    buf[pos + 1] = 0x00;
+    pos += 2;
+
+    // Encode the query name (e.g. "_signalk-http._tcp.local.")
+    pos = try encodeDnsName(buf, pos, name);
+
+    // Type: PTR (12)
+    buf[pos] = 0x00;
+    buf[pos + 1] = 0x0C;
+    pos += 2;
+    // Class: IN (1) with unicast-response bit clear
+    buf[pos] = 0x00;
+    buf[pos + 1] = 0x01;
+    pos += 2;
+
+    return pos;
+}
+
+/// Encode a dotted DNS name into wire format (length-prefixed labels).
+fn encodeDnsName(buf: []u8, offset: usize, name: []const u8) !usize {
+    var pos = offset;
+    var remaining = name;
+
+    // Strip trailing dot if present
+    if (remaining.len > 0 and remaining[remaining.len - 1] == '.') {
+        remaining = remaining[0 .. remaining.len - 1];
+    }
+
+    while (remaining.len > 0) {
+        const dot_idx = std.mem.indexOfScalar(u8, remaining, '.') orelse remaining.len;
+        if (dot_idx == 0 or dot_idx > 63) return error.InvalidDnsName;
+        if (pos + 1 + dot_idx > buf.len) return error.BufferTooSmall;
+
+        buf[pos] = @intCast(dot_idx);
+        pos += 1;
+        @memcpy(buf[pos .. pos + dot_idx], remaining[0..dot_idx]);
+        pos += dot_idx;
+
+        if (dot_idx < remaining.len) {
+            remaining = remaining[dot_idx + 1 ..];
+        } else {
+            remaining = remaining[remaining.len..];
+        }
+    }
+
+    // Null terminator
+    if (pos >= buf.len) return error.BufferTooSmall;
+    buf[pos] = 0x00;
+    pos += 1;
+
+    return pos;
+}
+
+/// Parse an mDNS response packet looking for SRV and A records.
+fn parseMdnsResponse(pkt: []const u8) ?MdnsResult {
+    if (pkt.len < 12) return null;
+
+    // Read header counts (big-endian)
+    const qdcount = readU16(pkt, 4);
+    const ancount = readU16(pkt, 6);
+    const nscount = readU16(pkt, 8);
+    const arcount = readU16(pkt, 10);
+    const total_rr = ancount + nscount + arcount;
+
+    if (total_rr == 0) return null;
+
+    // Skip question section
+    var pos: usize = 12;
+    var q: u16 = 0;
+    while (q < qdcount) : (q += 1) {
+        pos = skipDnsName(pkt, pos) orelse return null;
+        if (pos + 4 > pkt.len) return null;
+        pos += 4; // skip type + class
+    }
+
+    // Parse answer/authority/additional sections
+    var found_addr: ?[4]u8 = null;
+    var found_port: ?u16 = null;
+
+    var rr: u16 = 0;
+    while (rr < total_rr) : (rr += 1) {
+        // Skip RR name
+        pos = skipDnsName(pkt, pos) orelse return null;
+        if (pos + 10 > pkt.len) return null;
+
+        const rr_type = readU16(pkt, pos);
+        pos += 2;
+        // skip class
+        pos += 2;
+        // skip TTL
+        pos += 4;
+        const rdlength = readU16(pkt, pos);
+        pos += 2;
+
+        if (pos + rdlength > pkt.len) return null;
+
+        if (rr_type == 1 and rdlength == 4) {
+            // A record — IPv4 address
+            found_addr = .{ pkt[pos], pkt[pos + 1], pkt[pos + 2], pkt[pos + 3] };
+        } else if (rr_type == 33 and rdlength >= 6) {
+            // SRV record — priority(2) + weight(2) + port(2) + target
+            found_port = readU16(pkt, pos + 4);
+        }
+
+        pos += rdlength;
+    }
+
+    if (found_addr) |addr| {
+        const port = found_port orelse 3000;
+        return MdnsResult{ .addr = addr, .port = port };
+    }
+
+    return null;
+}
+
+fn readU16(buf: []const u8, offset: usize) u16 {
+    return (@as(u16, buf[offset]) << 8) | @as(u16, buf[offset + 1]);
+}
+
+/// Skip over a DNS name in wire format (handles compression pointers).
+fn skipDnsName(pkt: []const u8, offset: usize) ?usize {
+    var pos = offset;
+    while (pos < pkt.len) {
+        const len_byte = pkt[pos];
+        if (len_byte == 0) {
+            // End of name
+            return pos + 1;
+        }
+        if ((len_byte & 0xC0) == 0xC0) {
+            // Compression pointer — 2 bytes total
+            return pos + 2;
+        }
+        // Regular label
+        pos += 1 + @as(usize, len_byte);
+    }
     return null;
 }
 
