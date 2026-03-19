@@ -149,6 +149,13 @@ fn handleGetStates(handle: WsHandle) void {
     WsHandler.write(handle, states_json, true) catch |err| {
         std.log.err("WS: failed to send states: {}", .{err});
     };
+
+    // Also send entity registry (display precision) if available
+    if (ha_client.getCachedEntityRegistryJson()) |reg_json| {
+        WsHandler.write(handle, reg_json, true) catch |err| {
+            std.log.err("WS: failed to send entity registry: {}", .{err});
+        };
+    }
 }
 
 /// Handle "call_service" — forward to HA via the HA client.

@@ -40,6 +40,9 @@ var next_msg_id: std.atomic.Value(u32) = std.atomic.Value(u32).init(1);
 /// Track the subscription ID for state_changed events
 var subscribe_event_id: u32 = 0;
 
+/// Track the entity registry request ID
+var entity_registry_id: u32 = 0;
+
 /// Counter for state_changed events (for periodic logging)
 var state_change_count: std.atomic.Value(u64) = std.atomic.Value(u64).init(0);
 
@@ -86,6 +89,16 @@ pub fn deinit() void {
         if (cached_states_json) |json| {
             allocator.free(json);
             cached_states_json = null;
+        }
+    }
+
+    // Free cached entity registry JSON
+    {
+        cached_entity_registry_mutex.lock();
+        defer cached_entity_registry_mutex.unlock();
+        if (cached_entity_registry_json) |json| {
+            allocator.free(json);
+            cached_entity_registry_json = null;
         }
     }
 
@@ -444,19 +457,42 @@ fn handleHaMessage(message: []const u8, stream: std.net.Stream, authenticated: *
         ) catch return;
         defer allocator.free(sub_msg);
         try sendWsFrame(stream, 0x1, sub_msg);
+
+        // Fetch entity registry for display precision
+        entity_registry_id = next_msg_id.fetchAdd(1, .monotonic);
+        const reg_msg = std.fmt.allocPrint(
+            allocator,
+            "{{\"id\":{d},\"type\":\"config/entity_registry/list_for_display\"}}",
+            .{entity_registry_id},
+        ) catch return;
+        defer allocator.free(reg_msg);
+        try sendWsFrame(stream, 0x1, reg_msg);
     } else if (std.mem.eql(u8, msg_type, "auth_invalid")) {
         log.err("HA: authentication failed — check SUPERVISOR_TOKEN", .{});
         return error.AuthFailed;
     } else if (std.mem.eql(u8, msg_type, "result")) {
-        // Response to a command (get_states or subscribe_events)
+        // Response to a command (get_states, subscribe_events, entity_registry)
         const success = if (root.object.get("success")) |v| (v == .bool and v.bool) else false;
         if (!success) {
             log.warn("HA: command failed: {s}", .{message[0..@min(message.len, 200)]});
             return;
         }
 
-        // Check if this is the get_states result
-        if (root.object.get("result")) |result_val| {
+        // Check the message ID to route to the right handler
+        const msg_id: u32 = if (root.object.get("id")) |v| switch (v) {
+            .integer => |i| if (i >= 0) @intCast(i) else 0,
+            else => 0,
+        } else 0;
+
+        if (msg_id == entity_registry_id and entity_registry_id != 0) {
+            // Entity registry response
+            if (root.object.get("result")) |result_val| {
+                if (result_val == .object) {
+                    handleEntityRegistryResult(result_val.object);
+                }
+            }
+        } else if (root.object.get("result")) |result_val| {
+            // Check if this is the get_states result
             if (result_val == .array) {
                 handleStatesResult(result_val.array);
                 subscribed.* = true;
@@ -515,6 +551,58 @@ fn handleStatesResult(states: std.json.Array) void {
     websocket.broadcastStates(states_json.items);
 
     log.info("HA: received {d} entity states", .{states.items.len});
+}
+
+/// Process the result of a config/entity_registry/list_for_display call.
+/// Extracts display precision (dp) for each entity and builds a compact
+/// JSON message: {"type":"entity_registry","data":{"entity_id":dp,...}}
+fn handleEntityRegistryResult(result: std.json.ObjectMap) void {
+    const entities_val = result.get("entities") orelse {
+        log.warn("HA: entity registry result has no 'entities' field", .{});
+        return;
+    };
+    if (entities_val != .array) return;
+    const entities = entities_val.array;
+
+    // Build a compact JSON with just entity_id -> display_precision mapping
+    var json_buf = std.ArrayList(u8).init(allocator);
+    defer json_buf.deinit();
+
+    json_buf.appendSlice("{\"type\":\"entity_registry\",\"data\":{") catch return;
+    var first = true;
+    var count: usize = 0;
+
+    for (entities.items) |item| {
+        if (item != .object) continue;
+
+        // "ei" = entity_id (abbreviated key from HA)
+        const ei_val = item.object.get("ei") orelse continue;
+        if (ei_val != .string) continue;
+        const entity_id = ei_val.string;
+
+        // "dp" = display_precision (abbreviated key from HA)
+        const dp_val = item.object.get("dp") orelse continue;
+        const dp: i64 = switch (dp_val) {
+            .integer => |i| i,
+            else => continue,
+        };
+
+        if (!first) json_buf.append(',') catch continue;
+        first = false;
+
+        std.fmt.format(json_buf.writer(), "\"{s}\":{d}", .{ entity_id, dp }) catch continue;
+        count += 1;
+    }
+
+    json_buf.appendSlice("}}") catch return;
+
+    // Cache for new clients
+    cacheEntityRegistryJson(json_buf.items);
+
+    // Broadcast to all connected browser clients
+    websocket.broadcastRaw(json_buf.items);
+
+    log.info("HA: entity registry received, {d} entities with display precision", .{count});
 }
 
 /// Process a single state_changed event from HA.
@@ -592,6 +680,27 @@ pub fn getCachedStatesJson() ?[]const u8 {
     cached_states_mutex.lock();
     defer cached_states_mutex.unlock();
     return cached_states_json;
+}
+
+/// Cached entity registry JSON (for sending to newly connected clients).
+var cached_entity_registry_json: ?[]const u8 = null;
+var cached_entity_registry_mutex: std.Thread.Mutex = .{};
+
+fn cacheEntityRegistryJson(json: []const u8) void {
+    cached_entity_registry_mutex.lock();
+    defer cached_entity_registry_mutex.unlock();
+
+    if (cached_entity_registry_json) |old| {
+        allocator.free(old);
+    }
+    cached_entity_registry_json = allocator.dupe(u8, json) catch null;
+}
+
+/// Get the cached entity registry JSON. Returns null if not yet fetched.
+pub fn getCachedEntityRegistryJson() ?[]const u8 {
+    cached_entity_registry_mutex.lock();
+    defer cached_entity_registry_mutex.unlock();
+    return cached_entity_registry_json;
 }
 
 /// Call an HA service via the REST API.

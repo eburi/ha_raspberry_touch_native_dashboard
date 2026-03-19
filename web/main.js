@@ -77,6 +77,14 @@ const SENSOR_MAP = {
 const HA_DATETIME_ENTITY = "sensor.date_time_iso";
 const SENSOR_ID_DATETIME = 14;
 
+// Display precision map from HA entity registry: entity_id -> precision (integer)
+// Populated from "entity_registry" message sent by the server.
+const displayPrecisionMap = {};
+
+// Cache of last-known entity state and attributes for re-formatting
+// when display precision data arrives after initial states.
+const lastEntityState = {};
+
 // Sail and toggle entities (used only for subscribe list and routing state updates)
 const SAIL_SELECT_ENTITIES = [
     "input_select.sail_configuration_main",
@@ -291,10 +299,14 @@ function formatHaDateTime(state) {
  * Routes entity state to the appropriate WASM export.
  * All knowledge of options/values lives in WASM — JS just passes raw strings.
  */
-function toConfiguredPrecision(value, attributes) {
+function toConfiguredPrecision(value, attributes, entityId) {
     if (!attributes || typeof attributes !== "object") return null;
 
-    const rawPrecision = attributes.display_precision ?? attributes.suggested_display_precision;
+    // Priority: registry display_precision (from entity_registry message) >
+    //           attributes.display_precision > attributes.suggested_display_precision
+    const rawPrecision = (entityId && displayPrecisionMap[entityId] !== undefined)
+        ? displayPrecisionMap[entityId]
+        : (attributes.display_precision ?? attributes.suggested_display_precision);
     const precision = Number(rawPrecision);
     if (!Number.isInteger(precision) || precision < 0 || precision > 12) return null;
 
@@ -304,13 +316,13 @@ function toConfiguredPrecision(value, attributes) {
     return numericValue.toFixed(precision);
 }
 
-function formatSensorState(state, attributes) {
+function formatSensorState(state, attributes, entityId) {
     const stateText = String(state);
     if (stateText === "unknown" || stateText === "unavailable") {
         return stateText;
     }
 
-    const preciseValue = toConfiguredPrecision(stateText, attributes);
+    const preciseValue = toConfiguredPrecision(stateText, attributes, entityId);
     const valueText = preciseValue ?? stateText;
 
     const unit = attributes && typeof attributes.unit_of_measurement === "string"
@@ -336,7 +348,9 @@ function handleStateUpdate(entityId, state, attributes) {
     // Check sensor map
     const sensorId = SENSOR_MAP[entityId];
     if (sensorId !== undefined) {
-        pushSensorValue(sensorId, formatSensorState(state, attributes));
+        // Cache raw state+attributes for re-formatting when precision data arrives
+        lastEntityState[entityId] = { state, attributes };
+        pushSensorValue(sensorId, formatSensorState(state, attributes, entityId));
         return;
     }
 
@@ -791,6 +805,24 @@ function handleWSMessage(msg) {
                         String(entity.state),
                         entity.attributes,
                     );
+                }
+            }
+        }
+    } else if (msg.type === "entity_registry") {
+        // Entity registry with display precision: msg.data is {entity_id: precision, ...}
+        if (msg.data && typeof msg.data === "object") {
+            let count = 0;
+            for (const [entityId, precision] of Object.entries(msg.data)) {
+                displayPrecisionMap[entityId] = precision;
+                count++;
+            }
+            console.log(`[WS] Received entity registry: ${count} entities with display precision`);
+
+            // Re-format any already-received sensor values with the new precision data
+            for (const [entityId, sensorId] of Object.entries(SENSOR_MAP)) {
+                const cached = lastEntityState[entityId];
+                if (cached && displayPrecisionMap[entityId] !== undefined) {
+                    pushSensorValue(sensorId, formatSensorState(cached.state, cached.attributes, entityId));
                 }
             }
         }
