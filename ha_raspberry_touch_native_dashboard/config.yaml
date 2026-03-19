@@ -17,7 +17,7 @@ startup: application
 # Resource access
 homeassistant_api: true
 hassio_api: true
-hassio_role: default
+hassio_role: manager
 
 # Device access for native framebuffer + touch input rendering
 devices:
