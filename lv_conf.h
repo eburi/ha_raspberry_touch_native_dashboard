@@ -1,7 +1,7 @@
 /**
  * @file lv_conf.h
  * Configuration file for LVGL v9.2.2
- * Minimal config for WASM (browser) target
+ * Minimal config for WASM and native framebuffer targets
  */
 
 /* clang-format off */

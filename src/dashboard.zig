@@ -5,7 +5,7 @@
 ///!
 ///! Pages:
 ///!   0 — Logbook:      Position + 24h log sensor cards
-///!   1 — Anchor Alarm: (placeholder)
+///!   1 — Anchor Alarm: Anchor watch with map, alarm ring, and controls
 ///!   2 — Sails:        Main sail, jib & code 0 configuration
 ///!
 ///! Color palette (dark nautical theme):
@@ -14,9 +14,8 @@
 ///!   ACCENT_1   #941B0C  — borders, inactive elements
 ///!   ACCENT_2   #BC3908  — active nav icon, highlights
 ///!   FOREGROUND #F6AA1C  — text, values, active buttons
-
 const std = @import("std");
-const lv = @import("lv.zig");
+const lv = @import("lv");
 
 // ============================================================
 // Color palette
@@ -62,7 +61,7 @@ var page_containers: [PAGE_COUNT]?*lv.lv_obj_t = .{ null, null, null };
 // Nav icon button objects (for highlight tracking)
 var nav_buttons: [PAGE_COUNT]?*lv.lv_obj_t = .{ null, null, null };
 
-// --- Logbook page sensor labels (updated via WASM export) ---
+// --- Logbook page sensor labels (updated via platform state callbacks) ---
 const SENSOR_ID_LATITUDE: i32 = 0;
 const SENSOR_ID_LONGITUDE: i32 = 1;
 const SENSOR_ID_LOG: i32 = 2;
@@ -115,6 +114,9 @@ var anchor_info: ?*lv.lv_obj_t = null;
 var anchor_zoom_lbl: ?*lv.lv_obj_t = null;
 var anchor_action_btn_label: ?*lv.lv_obj_t = null;
 var anchor_is_set: bool = false;
+var anchor_ring_diameter_px: i32 = 380;
+var anchor_center_x_px: i32 = 0;
+var anchor_center_y_px: i32 = 0;
 
 var anchor_line_dots: [ANCHOR_LINE_POINTS]?*lv.lv_obj_t = .{null} ** ANCHOR_LINE_POINTS;
 var anchor_track_dots: [ANCHOR_TRACK_POINTS]?*lv.lv_obj_t = .{null} ** ANCHOR_TRACK_POINTS;
@@ -159,11 +161,25 @@ var sail_jib_current: usize = 0; // index of currently active jib option
 var code0_btn: ?*lv.lv_obj_t = null;
 var code0_active: bool = false;
 
-// JS callbacks for sail config changes
-// js_sail_config_changed: passes entity_id string ptr/len + option value string ptr/len
-extern fn js_sail_config_changed(entity_ptr: [*]const u8, entity_len: i32, option_ptr: [*]const u8, option_len: i32) void;
-extern fn js_sail_toggle_changed(entity_ptr: [*]const u8, entity_len: i32, state: i32) void;
-extern fn js_anchor_action(action_ptr: [*]const u8, action_len: i32, value: f64) void;
+// Platform callbacks — injected by the platform layer (WASM, native, etc.)
+// These decouple the dashboard from any specific runtime environment.
+pub const PlatformCallbacks = struct {
+    /// Called when a sail config select option changes.
+    /// entity: HA entity ID, option: selected option label.
+    sail_config_changed: ?*const fn (entity_ptr: [*]const u8, entity_len: i32, option_ptr: [*]const u8, option_len: i32) void = null,
+    /// Called when a sail boolean toggle changes.
+    /// entity: HA entity ID, state: 1=on, 0=off.
+    sail_toggle_changed: ?*const fn (entity_ptr: [*]const u8, entity_len: i32, state: i32) void = null,
+    /// Called when an anchor control button is pressed.
+    /// action: action name string, value: numeric parameter.
+    anchor_action: ?*const fn (action_ptr: [*]const u8, action_len: i32, value: f64) void = null,
+};
+
+var platform_callbacks: PlatformCallbacks = .{};
+
+pub fn setPlatformCallbacks(callbacks: PlatformCallbacks) void {
+    platform_callbacks = callbacks;
+}
 
 // HA entity IDs (null-terminated for convenience, length excludes sentinel)
 const HA_ENTITY_SAIL_MAIN = "input_select.sail_configuration_main";
@@ -200,11 +216,11 @@ pub fn create() void {
     showPage(PAGE_LOGBOOK);
 }
 
-export fn update_anchor_connection_state(state: i32) void {
+pub fn update_anchor_connection_state(state: i32) void {
     setAnchorConnectionUi(state);
 }
 
-export fn update_anchor_loader_rotation(deg10: i32) void {
+pub fn update_anchor_loader_rotation(deg10: i32) void {
     if (anchor_data_icon) |icon| {
         lv.lv_image_set_rotation(icon, deg10);
     }
@@ -678,6 +694,14 @@ fn createAnchorPage(parent: ?*lv.lv_obj_t) void {
         lv.lv_obj_add_flag(im, lv.LV_OBJ_FLAG_HIDDEN);
     }
 
+    const compass_icon = lv.lv_image_create(parent);
+    if (compass_icon) |im| {
+        lv.lv_image_set_src(im, &lv.tabler_icon_assets_compass_north_svgrepo_com_svg_N);
+        lv.lv_obj_set_style_image_recolor(im, lv.lv_color_hex(COL_ACCENT_2), lv.LV_PART_MAIN);
+        lv.lv_obj_set_style_image_recolor_opa(im, lv.LV_OPA_COVER, lv.LV_PART_MAIN);
+        lv.lv_obj_align(im, lv.LV_ALIGN_TOP_LEFT, 0, PAGE_TITLE_H + 8);
+    }
+
     const root = lv.lv_obj_create(parent);
     if (root == null) return;
     anchor_root = root;
@@ -729,10 +753,12 @@ fn createAnchorPage(parent: ?*lv.lv_obj_t) void {
     const boat_img = lv.lv_image_create(map);
     if (boat_img) |im| {
         anchor_boat = im;
-        lv.lv_image_set_src(im, &lv.tabler_icon_sailboat_P);
-        lv.lv_obj_set_style_image_recolor(im, lv.lv_color_hex(0x8DCCFF), lv.LV_PART_MAIN);
+        lv.lv_image_set_src(im, &lv.tabler_icon_triangle_filled_S);
+        lv.lv_obj_set_style_image_recolor(im, lv.lv_color_hex(COL_FG), lv.LV_PART_MAIN);
         lv.lv_obj_set_style_image_recolor_opa(im, lv.LV_OPA_COVER, lv.LV_PART_MAIN);
-        lv.lv_obj_align(im, lv.LV_ALIGN_CENTER, 0, 120);
+        lv.lv_image_set_pivot(im, 12, 12);
+        lv.lv_image_set_rotation(im, 0);
+        lv.lv_obj_align(im, lv.LV_ALIGN_CENTER, 0, 0);
     }
 
     // Self track dots
@@ -768,9 +794,11 @@ fn createAnchorPage(parent: ?*lv.lv_obj_t) void {
         const other = lv.lv_image_create(map);
         if (other) |im| {
             anchor_other_boats[i] = im;
-            lv.lv_image_set_src(im, &lv.tabler_icon_sailboat_S);
-            lv.lv_obj_set_style_image_recolor(im, lv.lv_color_hex(0xAAAAAA), lv.LV_PART_MAIN);
+            lv.lv_image_set_src(im, &lv.tabler_icon_triangle_filled_S);
+            lv.lv_obj_set_style_image_recolor(im, lv.lv_color_hex(COL_TEXT_DIM), lv.LV_PART_MAIN);
             lv.lv_obj_set_style_image_recolor_opa(im, lv.LV_OPA_COVER, lv.LV_PART_MAIN);
+            lv.lv_image_set_pivot(im, 12, 12);
+            lv.lv_image_set_rotation(im, 0);
             lv.lv_obj_add_flag(im, lv.LV_OBJ_FLAG_HIDDEN);
         }
 
@@ -912,15 +940,16 @@ fn createAnchorBtn(parent: ?*lv.lv_obj_t, text: [*:0]const u8, width: i32, id: u
 
 fn anchorButtonCb(e: ?*lv.lv_event_t) callconv(.C) void {
     if (e == null) return;
+    const cb = platform_callbacks.anchor_action orelse return;
     const user_data = lv.lv_event_get_user_data(e);
     const id: usize = @intFromPtr(user_data);
 
     switch (id) {
-        ANCHOR_BTN_RADIUS_DEC => js_anchor_action(ANCHOR_ACTION_RADIUS_DEC.ptr, ANCHOR_ACTION_RADIUS_DEC.len, 0),
-        ANCHOR_BTN_RADIUS_INC => js_anchor_action(ANCHOR_ACTION_RADIUS_INC.ptr, ANCHOR_ACTION_RADIUS_INC.len, 0),
-        ANCHOR_BTN_TOGGLE => js_anchor_action(ANCHOR_ACTION_DROP_RAISE.ptr, ANCHOR_ACTION_DROP_RAISE.len, 0),
-        ANCHOR_BTN_ZOOM_DEC => js_anchor_action(ANCHOR_ACTION_ZOOM_DEC.ptr, ANCHOR_ACTION_ZOOM_DEC.len, 0),
-        ANCHOR_BTN_ZOOM_INC => js_anchor_action(ANCHOR_ACTION_ZOOM_INC.ptr, ANCHOR_ACTION_ZOOM_INC.len, 0),
+        ANCHOR_BTN_RADIUS_DEC => cb(ANCHOR_ACTION_RADIUS_DEC.ptr, ANCHOR_ACTION_RADIUS_DEC.len, 0),
+        ANCHOR_BTN_RADIUS_INC => cb(ANCHOR_ACTION_RADIUS_INC.ptr, ANCHOR_ACTION_RADIUS_INC.len, 0),
+        ANCHOR_BTN_TOGGLE => cb(ANCHOR_ACTION_DROP_RAISE.ptr, ANCHOR_ACTION_DROP_RAISE.len, 0),
+        ANCHOR_BTN_ZOOM_DEC => cb(ANCHOR_ACTION_ZOOM_DEC.ptr, ANCHOR_ACTION_ZOOM_DEC.len, 0),
+        ANCHOR_BTN_ZOOM_INC => cb(ANCHOR_ACTION_ZOOM_INC.ptr, ANCHOR_ACTION_ZOOM_INC.len, 0),
         else => {},
     }
 }
@@ -1092,13 +1121,15 @@ fn sailMainClickCb(e: ?*lv.lv_event_t) callconv(.C) void {
     const option_index: usize = @intFromPtr(user_data);
     if (option_index < SAIL_MAIN_OPTIONS) {
         updateSailMainHighlight(option_index);
-        const opt = sail_main_labels[option_index];
-        js_sail_config_changed(
-            HA_ENTITY_SAIL_MAIN.ptr,
-            HA_ENTITY_SAIL_MAIN.len,
-            opt,
-            @intCast(std.mem.len(opt)),
-        );
+        if (platform_callbacks.sail_config_changed) |cb| {
+            const opt = sail_main_labels[option_index];
+            cb(
+                HA_ENTITY_SAIL_MAIN.ptr,
+                HA_ENTITY_SAIL_MAIN.len,
+                opt,
+                @intCast(std.mem.len(opt)),
+            );
+        }
     }
 }
 
@@ -1108,13 +1139,15 @@ fn sailJibClickCb(e: ?*lv.lv_event_t) callconv(.C) void {
     const option_index: usize = @intFromPtr(user_data);
     if (option_index < SAIL_JIB_OPTIONS) {
         updateSailJibHighlight(option_index);
-        const opt = sail_jib_labels[option_index];
-        js_sail_config_changed(
-            HA_ENTITY_SAIL_JIB.ptr,
-            HA_ENTITY_SAIL_JIB.len,
-            opt,
-            @intCast(std.mem.len(opt)),
-        );
+        if (platform_callbacks.sail_config_changed) |cb| {
+            const opt = sail_jib_labels[option_index];
+            cb(
+                HA_ENTITY_SAIL_JIB.ptr,
+                HA_ENTITY_SAIL_JIB.len,
+                opt,
+                @intCast(std.mem.len(opt)),
+            );
+        }
     }
 }
 
@@ -1122,11 +1155,13 @@ fn code0ClickCb(e: ?*lv.lv_event_t) callconv(.C) void {
     if (e == null) return;
     code0_active = !code0_active;
     updateCode0Style();
-    js_sail_toggle_changed(
-        HA_ENTITY_CODE0.ptr,
-        HA_ENTITY_CODE0.len,
-        if (code0_active) @as(i32, 1) else @as(i32, 0),
-    );
+    if (platform_callbacks.sail_toggle_changed) |cb| {
+        cb(
+            HA_ENTITY_CODE0.ptr,
+            HA_ENTITY_CODE0.len,
+            if (code0_active) @as(i32, 1) else @as(i32, 0),
+        );
+    }
 }
 
 fn updateSailMainHighlight(active_index: usize) void {
@@ -1211,8 +1246,8 @@ fn updateCode0Style() void {
 }
 
 // ============================================================
-// WASM-exported state update functions
-// (called from JS when HA state changes arrive via WebSocket)
+// State update functions
+// (called from platform layer when HA state changes arrive)
 // ============================================================
 
 /// Update a sensor value label by sensor ID.
@@ -1232,7 +1267,7 @@ fn updateCode0Style() void {
 ///   12 = 24h distance
 ///   13 = 24h average speed
 ///   14 = formatted date/time header
-export fn update_sensor(sensor_id: i32, value_ptr: [*]const u8, value_len: i32) void {
+pub fn update_sensor(sensor_id: i32, value_ptr: [*]const u8, value_len: i32) void {
     const value: [*:0]const u8 = @ptrCast(value_ptr);
     _ = value_len; // text is null-terminated via the Zig/LVGL label API
 
@@ -1261,8 +1296,8 @@ export fn update_sensor(sensor_id: i32, value_ptr: [*]const u8, value_len: i32) 
 }
 
 /// Update the main sail selection from HA state.
-/// Called from JS with the raw HA state string (e.g. "Reef 1", "100%").
-export fn update_sail_main(value_ptr: [*]const u8, value_len: i32) void {
+/// Called with the raw HA state string (e.g. "Reef 1", "100%").
+pub fn update_sail_main(value_ptr: [*]const u8, value_len: i32) void {
     const value = value_ptr[0..@intCast(value_len)];
     for (0..SAIL_MAIN_OPTIONS) |i| {
         const label = sail_main_labels[i];
@@ -1275,8 +1310,8 @@ export fn update_sail_main(value_ptr: [*]const u8, value_len: i32) void {
 }
 
 /// Update the jib selection from HA state.
-/// Called from JS with the raw HA state string (e.g. "75%", "100%").
-export fn update_sail_jib(value_ptr: [*]const u8, value_len: i32) void {
+/// Called with the raw HA state string (e.g. "75%", "100%").
+pub fn update_sail_jib(value_ptr: [*]const u8, value_len: i32) void {
     const value = value_ptr[0..@intCast(value_len)];
     for (0..SAIL_JIB_OPTIONS) |i| {
         const label = sail_jib_labels[i];
@@ -1289,28 +1324,28 @@ export fn update_sail_jib(value_ptr: [*]const u8, value_len: i32) void {
 }
 
 /// Update the Code 0 toggle from HA state.
-/// Called from JS with the raw HA state string ("on" or "off").
-export fn update_code0(value_ptr: [*]const u8, value_len: i32) void {
+/// Called with the raw HA state string ("on" or "off").
+pub fn update_code0(value_ptr: [*]const u8, value_len: i32) void {
     const value = value_ptr[0..@intCast(value_len)];
     code0_active = std.mem.eql(u8, value, "on");
     updateCode0Style();
 }
 
-export fn update_anchor_status(value_ptr: [*]const u8, value_len: i32) void {
+pub fn update_anchor_status(value_ptr: [*]const u8, value_len: i32) void {
     _ = value_len;
     if (anchor_connection_status) |lbl| {
         lv.lv_label_set_text(lbl, @ptrCast(value_ptr));
     }
 }
 
-export fn update_anchor_info(value_ptr: [*]const u8, value_len: i32) void {
+pub fn update_anchor_info(value_ptr: [*]const u8, value_len: i32) void {
     _ = value_len;
     if (anchor_info) |lbl| {
         lv.lv_label_set_text(lbl, @ptrCast(value_ptr));
     }
 }
 
-export fn update_anchor_mode(is_set: i32) void {
+pub fn update_anchor_mode(is_set: i32) void {
     anchor_is_set = is_set != 0;
     if (anchor_action_btn_label) |lbl| {
         lv.lv_label_set_text(lbl, if (anchor_is_set) "Raise Anchor" else "Drop Anchor");
@@ -1322,18 +1357,36 @@ export fn update_anchor_mode(is_set: i32) void {
     }
 }
 
-export fn update_anchor_ring_px(diameter_px: i32) void {
+fn updateAnchorRingGeometry() void {
     if (anchor_ring) |ring| {
-        const d = std.math.clamp(diameter_px, 40, 1200);
-        lv.lv_obj_set_size(ring, d, d);
-        lv.lv_obj_set_style_radius(ring, @divTrunc(d, 2), lv.LV_PART_MAIN);
-        lv.lv_obj_align(ring, lv.LV_ALIGN_CENTER, 0, 0);
+        lv.lv_obj_set_size(ring, anchor_ring_diameter_px, anchor_ring_diameter_px);
+        lv.lv_obj_set_style_radius(ring, @divTrunc(anchor_ring_diameter_px, 2), lv.LV_PART_MAIN);
+        lv.lv_obj_set_pos(
+            ring,
+            anchor_center_x_px - @divTrunc(anchor_ring_diameter_px, 2),
+            anchor_center_y_px - @divTrunc(anchor_ring_diameter_px, 2),
+        );
     }
 }
 
-export fn update_anchor_boat_px(x: i32, y: i32) void {
+pub fn update_anchor_ring_px(diameter_px: i32) void {
+    anchor_ring_diameter_px = std.math.clamp(diameter_px, 40, 1200);
+    updateAnchorRingGeometry();
+}
+
+pub fn update_anchor_anchor_px(x: i32, y: i32) void {
+    anchor_center_x_px = x;
+    anchor_center_y_px = y;
+    if (anchor_icon) |anchor| {
+        lv.lv_obj_set_pos(anchor, x - 12, y - 12);
+    }
+    updateAnchorRingGeometry();
+}
+
+pub fn update_anchor_boat_px(x: i32, y: i32, heading_deg10: i32) void {
     if (anchor_boat) |boat| {
         lv.lv_obj_set_pos(boat, x - 12, y - 12);
+        lv.lv_image_set_rotation(boat, heading_deg10);
     }
 }
 
@@ -1348,21 +1401,22 @@ fn updatePoint(obj: ?*lv.lv_obj_t, x: i32, y: i32, visible: bool) void {
     }
 }
 
-export fn update_anchor_line_point(index: i32, x: i32, y: i32, visible: i32) void {
+pub fn update_anchor_line_point(index: i32, x: i32, y: i32, visible: i32) void {
     if (index < 0 or index >= ANCHOR_LINE_POINTS) return;
     updatePoint(anchor_line_dots[@intCast(index)], x, y, visible != 0);
 }
 
-export fn update_anchor_track_point(index: i32, x: i32, y: i32, visible: i32) void {
+pub fn update_anchor_track_point(index: i32, x: i32, y: i32, visible: i32) void {
     if (index < 0 or index >= ANCHOR_TRACK_POINTS) return;
     updatePoint(anchor_track_dots[@intCast(index)], x, y, visible != 0);
 }
 
-export fn update_anchor_other_boat(index: i32, x: i32, y: i32, visible: i32) void {
+pub fn update_anchor_other_boat(index: i32, x: i32, y: i32, visible: i32, heading_deg10: i32) void {
     if (index < 0 or index >= ANCHOR_MAX_OTHER) return;
     const idx: usize = @intCast(index);
     if (anchor_other_boats[idx]) |boat| {
         lv.lv_obj_set_pos(boat, x - 8, y - 8);
+        lv.lv_image_set_rotation(boat, heading_deg10);
         if (visible != 0) {
             lv.lv_obj_remove_flag(boat, lv.LV_OBJ_FLAG_HIDDEN);
         } else {
@@ -1371,7 +1425,7 @@ export fn update_anchor_other_boat(index: i32, x: i32, y: i32, visible: i32) voi
     }
 }
 
-export fn update_anchor_other_track_point(vessel_index: i32, point_index: i32, x: i32, y: i32, visible: i32) void {
+pub fn update_anchor_other_track_point(vessel_index: i32, point_index: i32, x: i32, y: i32, visible: i32) void {
     if (vessel_index < 0 or vessel_index >= ANCHOR_MAX_OTHER) return;
     if (point_index < 0 or point_index >= ANCHOR_OTHER_TRACK_POINTS) return;
     updatePoint(anchor_other_tracks[@intCast(vessel_index)][@intCast(point_index)], x, y, visible != 0);

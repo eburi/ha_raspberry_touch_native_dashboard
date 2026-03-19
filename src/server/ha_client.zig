@@ -14,7 +14,6 @@
 ///!   5. Server sends:   {"id": N, "type": "result", "success": true}
 ///!   6. Server sends:   {"id": N, "type": "event", "event": {"event_type": "state_changed", ...}}
 ///!   7. Client sends:   {"id": N, "type": "get_states"} for initial state fetch
-
 const std = @import("std");
 const websocket = @import("websocket.zig");
 
@@ -185,14 +184,15 @@ fn haSession() !void {
     const ws_key = "dGhlIHNhbXBsZSBub25jZQ=="; // base64 of a fixed nonce (fine for local use)
 
     var handshake_buf: [2048]u8 = undefined;
-    const handshake = std.fmt.bufPrint(&handshake_buf,
+    const handshake = std.fmt.bufPrint(
+        &handshake_buf,
         "GET {s} HTTP/1.1\r\n" ++
-        "Host: {s}:{d}\r\n" ++
-        "Upgrade: websocket\r\n" ++
-        "Connection: Upgrade\r\n" ++
-        "Sec-WebSocket-Key: {s}\r\n" ++
-        "Sec-WebSocket-Version: 13\r\n" ++
-        "\r\n",
+            "Host: {s}:{d}\r\n" ++
+            "Upgrade: websocket\r\n" ++
+            "Connection: Upgrade\r\n" ++
+            "Sec-WebSocket-Key: {s}\r\n" ++
+            "Sec-WebSocket-Version: 13\r\n" ++
+            "\r\n",
         .{ path, host, port, ws_key },
     ) catch return error.HandshakeBufferTooSmall;
 

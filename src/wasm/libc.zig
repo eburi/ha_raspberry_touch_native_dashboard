@@ -2,7 +2,6 @@
 ///! These are needed because the C compiler (used to compile LVGL) emits
 ///! calls to memset/memcpy/memmove for struct init, array ops, etc.
 ///! even when LVGL uses its own lv_memset/lv_memcpy internally.
-
 const std = @import("std");
 
 // Use Zig's WASM page allocator for any C malloc/free calls
@@ -69,36 +68,46 @@ export fn strlen(s: [*]const u8) usize {
 // --- Memory allocation ---
 // LVGL uses LV_STDLIB_BUILTIN (TLSF allocator) so these should rarely be called.
 // But just in case the C compiler inserts calls.
+//
+// We prepend a usize header to each allocation to track the size, so that
+// realloc can safely copy only the old size (not the new size) when growing.
 
-const Allocation = struct {
-    ptr: [*]u8,
-    len: usize,
-};
+const alloc_header_size = @sizeOf(usize);
+
+fn allocWithHeader(size: usize) ?[*]u8 {
+    const total = size + alloc_header_size;
+    const mem = wasm_allocator.alloc(u8, total) catch return null;
+    const header: *usize = @ptrCast(@alignCast(mem.ptr));
+    header.* = size;
+    return mem.ptr + alloc_header_size;
+}
+
+fn getAllocSize(ptr: [*]u8) usize {
+    const header: *const usize = @ptrCast(@alignCast(ptr - alloc_header_size));
+    return header.*;
+}
 
 export fn malloc(size: usize) ?[*]u8 {
-    const mem = wasm_allocator.alloc(u8, size) catch return null;
-    return mem.ptr;
+    return allocWithHeader(size);
 }
 
 export fn calloc(nmemb: usize, size: usize) ?[*]u8 {
     const total = nmemb *| size;
-    const mem = wasm_allocator.alloc(u8, total) catch return null;
-    @memset(mem, 0);
-    return mem.ptr;
+    const ptr = allocWithHeader(total) orelse return null;
+    @memset(ptr[0..total], 0);
+    return ptr;
 }
 
 export fn realloc(ptr: ?[*]u8, size: usize) ?[*]u8 {
-    // WASM page allocator doesn't support realloc properly,
-    // so we just allocate new + copy. This is rarely called.
     if (ptr == null) return malloc(size);
     if (size == 0) {
         free(ptr);
         return null;
     }
+    const old_size = getAllocSize(ptr.?);
     const new_mem = malloc(size) orelse return null;
-    // We don't know the old size, so we copy `size` bytes
-    // (caller guarantees the old buffer has at least `size` bytes when growing)
-    @memcpy(new_mem[0..size], ptr.?[0..size]);
+    const copy_size = @min(old_size, size);
+    @memcpy(new_mem[0..copy_size], ptr.?[0..copy_size]);
     return new_mem;
 }
 

@@ -138,6 +138,9 @@ Minimal lv_conf.h with only the features needed:
 │   ├── apparmor.txt             # AppArmor security profile
 │   ├── rootfs/etc/services.d/   # S6 service scripts
 │   └── translations/en.yaml    # UI strings
-├── deploy.sh                    # assembles app bundle and copies to HA host
+├── tools/
+│   ├── deploy.sh                # Deploy to HA instance (assemble, copy, rebuild, start)
+│   ├── dev_server.py            # Dev server with file watching + optional HA tunnel
+│   └── install_icons.py         # Fetch Tabler icons, rasterize to LVGL C assets
 └── DESIGN.md                    # This file
 ```

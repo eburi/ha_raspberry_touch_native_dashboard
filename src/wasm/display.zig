@@ -5,8 +5,7 @@
 ///! LVGL with LV_COLOR_DEPTH=32 uses XRGB8888 (little-endian: B,G,R,X in memory).
 ///! HTML Canvas ImageData expects RGBA (R,G,B,A in memory).
 ///! The flush callback swaps R<->B and sets A=0xFF.
-
-const lv = @import("lv.zig");
+const lv = @import("lv");
 
 /// JS import: notify the host that a region has been flushed
 extern fn js_flush(x: i32, y: i32, w: i32, h: i32) void;

@@ -1,12 +1,18 @@
 const std = @import("std");
 const fbdev = @import("fbdev");
 
-test "fbdev init returns placeholder state" {
-    const device = try fbdev.Fbdev.init("/dev/fb0");
+test "fbdev default state is uninitialized" {
+    const device = fbdev.Fbdev{};
 
     try std.testing.expectEqual(@as(?std.posix.fd_t, null), device.fd);
     try std.testing.expectEqual(@as(u32, 0), device.width);
     try std.testing.expectEqual(@as(u32, 0), device.height);
+    try std.testing.expectEqual(@as(u32, 0), device.bits_per_pixel);
+    try std.testing.expectEqual(@as(u32, 0), device.line_length);
+    try std.testing.expectEqual(@as(u32, 0), device.fb_size);
+    try std.testing.expect(device.fb_mem == null);
+    try std.testing.expect(device.display == null);
+    try std.testing.expect(device.draw_buf == null);
 }
 
 test "fbdev deinit is safe when unopened" {
@@ -14,6 +20,7 @@ test "fbdev deinit is safe when unopened" {
     device.deinit();
 
     try std.testing.expectEqual(@as(?std.posix.fd_t, null), device.fd);
+    try std.testing.expect(device.fb_mem == null);
 }
 
 test "fbdev error set includes expected variants" {

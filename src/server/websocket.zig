@@ -10,7 +10,6 @@
 ///!   Client → Server: { "type": "call_service", "domain": "...", "service": "...", "service_data": {...} }
 ///!   Server → Client: { "type": "state_changed", "entity_id": "...", "state": "..." }
 ///!   Server → Client: { "type": "states", "data": [{...}, ...] }
-
 const std = @import("std");
 const zap = @import("zap");
 

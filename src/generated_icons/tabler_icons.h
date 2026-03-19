@@ -32,6 +32,14 @@ extern const tabler_icon_dsc_t tabler_icon_alert_square_rounded_S;
 extern const tabler_icon_dsc_t tabler_icon_alert_square_rounded_P;
 extern const tabler_icon_dsc_t tabler_icon_alert_square_rounded_L;
 extern const tabler_icon_dsc_t tabler_icon_alert_square_rounded_N;
+extern const tabler_icon_dsc_t tabler_icon_triangle_filled_S;
+extern const tabler_icon_dsc_t tabler_icon_triangle_filled_P;
+extern const tabler_icon_dsc_t tabler_icon_triangle_filled_L;
+extern const tabler_icon_dsc_t tabler_icon_triangle_filled_N;
+extern const tabler_icon_dsc_t tabler_icon_assets_compass_north_svgrepo_com_svg_S;
+extern const tabler_icon_dsc_t tabler_icon_assets_compass_north_svgrepo_com_svg_P;
+extern const tabler_icon_dsc_t tabler_icon_assets_compass_north_svgrepo_com_svg_L;
+extern const tabler_icon_dsc_t tabler_icon_assets_compass_north_svgrepo_com_svg_N;
 
 typedef struct {
     const char *name;

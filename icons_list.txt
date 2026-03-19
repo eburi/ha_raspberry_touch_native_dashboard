@@ -7,3 +7,5 @@ anchor
 sailboat
 loader-2
 alert-square-rounded
+triangle-filled
+assets/compass-north-svgrepo-com.svg

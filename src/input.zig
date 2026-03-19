@@ -1,10 +1,9 @@
-///! LVGL input device driver for WASM target.
-///! JS calls set_input(x, y, pressed) to push pointer state.
+///! LVGL pointer input device driver.
+///! Platform-specific code calls setInput() to push pointer state.
 ///! LVGL polls via the read callback registered here.
+const lv = @import("lv");
 
-const lv = @import("lv.zig");
-
-/// Current pointer state (written by JS via exported set_input)
+/// Current pointer state (written by platform layer — JS/WASM or native evdev)
 var pointer_x: i32 = 0;
 var pointer_y: i32 = 0;
 var pointer_pressed: bool = false;
@@ -23,7 +22,9 @@ pub fn init(disp: ?*lv.lv_display_t) void {
     }
 }
 
-/// Called from JS (via exported WASM function) to update pointer state
+/// Called from platform layer to update pointer state.
+/// WASM: JS calls the exported set_input wrapper.
+/// Native: evdev background thread calls this on EV_SYN events.
 pub fn setInput(x: i32, y: i32, pressed: bool) void {
     pointer_x = x;
     pointer_y = y;

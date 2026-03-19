@@ -6,7 +6,6 @@
 ///!   GET  /api/ha/states    -> Proxy to Home Assistant states API
 ///!   POST /api/ha/services  -> Proxy to Home Assistant services API
 ///!   *    /api/ha/*         -> Generic proxy to HA REST API
-
 const std = @import("std");
 const zap = @import("zap");
 

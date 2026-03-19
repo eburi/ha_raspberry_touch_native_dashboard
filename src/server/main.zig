@@ -1,4 +1,5 @@
-///! Zap web server — serves the WASM dashboard, REST API, and WebSocket.
+///! Zap web server — serves the WASM dashboard, REST API, WebSocket,
+///! and drives the native framebuffer display when hardware is present.
 ///!
 ///! Routes:
 ///!   GET /              -> web/index.html
@@ -12,54 +13,54 @@
 ///! Instead, all files are served explicitly in onRequest with proper Content-Type
 ///! headers. This is necessary because:
 ///!   1. facil.io's public_folder bypasses onRequest entirely for matched files,
-///!      preventing us from normalizing paths (e.g. "//" -> "/") or adding headers.
-///!   2. HA's ingress proxy produces "//" paths (from ingress_entry: "/"),
-///!      which must be normalized before file lookup.
-///!   3. We need guaranteed Content-Type headers for HA ingress to work
+///!      preventing us from adding custom headers.
+///!   2. We need guaranteed Content-Type headers for HA ingress to work
 ///!      (without Content-Type, the iframe triggers a download instead of rendering).
-
 const std = @import("std");
 const zap = @import("zap");
 const routes = @import("routes.zig");
 const websocket = @import("websocket.zig");
 const ha_client = @import("ha_client.zig");
 const signalk_client = @import("signalk_client.zig");
+const native_display = @import("native_display");
 
 var runtime_log_level: std.log.Level = .info;
 var runtime_log_mutex: std.Thread.Mutex = .{};
 
-pub const std_options = struct {
-    pub const log_level = .debug;
+pub const std_options: std.Options = .{
+    .log_level = .debug,
 
-    pub fn logFn(
-        comptime message_level: std.log.Level,
-        comptime scope: @Type(.enum_literal),
-        comptime format: []const u8,
-        args: anytype,
-    ) void {
-        if (!shouldLog(message_level)) return;
+    .logFn = struct {
+        fn logFn(
+            comptime message_level: std.log.Level,
+            comptime scope: @Type(.enum_literal),
+            comptime format: []const u8,
+            args: anytype,
+        ) void {
+            if (!shouldLog(message_level)) return;
 
-        const level_text = switch (message_level) {
-            .err => "error",
-            .warn => "warning",
-            .info => "info",
-            .debug => "debug",
-        };
+            const level_text = switch (message_level) {
+                .err => "error",
+                .warn => "warning",
+                .info => "info",
+                .debug => "debug",
+            };
 
-        const scope_text = @tagName(scope);
+            const scope_text = @tagName(scope);
 
-        var buf: [2048]u8 = undefined;
-        const msg = std.fmt.bufPrint(&buf, format, args) catch "log formatting failed";
+            var buf: [2048]u8 = undefined;
+            const msg = std.fmt.bufPrint(&buf, format, args) catch "log formatting failed";
 
-        runtime_log_mutex.lock();
-        defer runtime_log_mutex.unlock();
+            runtime_log_mutex.lock();
+            defer runtime_log_mutex.unlock();
 
-        if (std.mem.eql(u8, scope_text, "default")) {
-            std.debug.print("{s}: {s}\n", .{ level_text, msg });
-        } else {
-            std.debug.print("{s}({s}): {s}\n", .{ level_text, scope_text, msg });
+            if (std.mem.eql(u8, scope_text, "default")) {
+                std.debug.print("{s}: {s}\n", .{ level_text, msg });
+            } else {
+                std.debug.print("{s}({s}): {s}\n", .{ level_text, scope_text, msg });
+            }
         }
-    }
+    }.logFn,
 };
 
 /// Server configuration
@@ -140,6 +141,16 @@ pub fn main() !void {
         // Non-fatal — anchor page can still show status + retries
     };
 
+    // Start native display if hardware is present (framebuffer + touch)
+    native_display.setHaCallService(&haCallServiceBridge);
+    const has_native = native_display.start() catch |err| blk: {
+        std.log.err("Failed to start native display: {}", .{err});
+        break :blk false;
+    };
+    if (has_native) {
+        std.log.info("Native framebuffer display active", .{});
+    }
+
     // Set up the Zap listener — NO public_folder (we serve files manually)
     // on_upgrade handles WebSocket upgrade requests via facil.io's protocol
     var listener = zap.HttpListener.init(.{
@@ -164,6 +175,7 @@ pub fn main() !void {
     });
 
     // Cleanup on shutdown
+    native_display.stop();
     signalk_client.stop();
     signalk_client.deinit();
     ha_client.stop();
@@ -194,17 +206,10 @@ fn onUpgrade(r: zap.Request, target_protocol: []const u8) anyerror!void {
 }
 
 fn onRequest(r: zap.Request) anyerror!void {
-    const raw_path = r.path orelse "/";
+    const path = r.path orelse "/";
 
-    // Normalize path: collapse multiple leading slashes to one
-    // (HA ingress can produce "//" when ingress_entry is "/")
-    var path = raw_path;
-    while (path.len > 1 and path[0] == '/' and path[1] == '/') {
-        path = path[1..];
-    }
-
-    // Log request for debugging ingress issues
-    std.log.info("Request: {s} -> {s}", .{ raw_path, path });
+    // Log request for debugging
+    std.log.info("Request: {s}", .{path});
 
     // API routes
     if (std.mem.startsWith(u8, path, "/api/")) {
@@ -254,6 +259,36 @@ fn onRequest(r: zap.Request) anyerror!void {
     // Nothing matched
     r.setStatus(.not_found);
     r.sendBody("Not found") catch {};
+}
+
+/// Bridge function: native display callbacks -> HA REST API.
+/// Translates the simple (domain, service, entity_id, extra_json) signature
+/// into ha_client.callService(domain, service, std.json.Value).
+fn haCallServiceBridge(domain: []const u8, service: []const u8, entity_id: []const u8, extra_json: ?[]const u8) void {
+    // Build a JSON body string: {"entity_id": "...", ...extra}
+    var buf: [512]u8 = undefined;
+    var body: []const u8 = undefined;
+
+    if (entity_id.len > 0 and extra_json != null) {
+        body = std.fmt.bufPrint(&buf, "{{\"entity_id\":\"{s}\",{s}}}", .{ entity_id, extra_json.? }) catch return;
+    } else if (entity_id.len > 0) {
+        body = std.fmt.bufPrint(&buf, "{{\"entity_id\":\"{s}\"}}", .{entity_id}) catch return;
+    } else if (extra_json) |extra| {
+        body = std.fmt.bufPrint(&buf, "{{{s}}}", .{extra}) catch return;
+    } else {
+        body = "{}";
+    }
+
+    // Parse the JSON body into a std.json.Value for ha_client.callService
+    var parsed = std.json.parseFromSlice(std.json.Value, std.heap.page_allocator, body, .{}) catch |err| {
+        std.log.err("Failed to parse service data JSON: {}", .{err});
+        return;
+    };
+    defer parsed.deinit();
+
+    ha_client.callService(domain, service, parsed.value) catch |err| {
+        std.log.err("HA service call {s}.{s} failed: {}", .{ domain, service, err });
+    };
 }
 
 /// Read configuration from environment (HA app) and /data/options.json

@@ -33,6 +33,7 @@ var status_message: []const u8 = "Detecting SignalK...";
 var persist_mutex: std.Thread.Mutex = .{};
 var persistent: PersistentState = .{};
 var state_file_path: []const u8 = "signalk_auth.json";
+var state_file_path_allocated: bool = false;
 var broadcaster: ?*const fn ([]const u8) void = null;
 var base_url_override: ?[]u8 = null;
 var supervisor_token: ?[]u8 = null;
@@ -85,14 +86,17 @@ pub fn init(alloc: std.mem.Allocator) void {
     const env_path = std.process.getEnvVarOwned(allocator, STATE_FILE_ENV) catch null;
     if (env_path) |p| {
         state_file_path = p;
+        state_file_path_allocated = true;
     } else {
         // Try HA app data dir first
         if (std.fs.openDirAbsolute("/data", .{})) |d| {
             var dir = d;
             dir.close();
             state_file_path = allocator.dupe(u8, "/data/signalk_auth.json") catch "signalk_auth.json";
+            state_file_path_allocated = !std.mem.eql(u8, state_file_path, "signalk_auth.json");
         } else |_| {
             state_file_path = "signalk_auth.json";
+            state_file_path_allocated = false;
         }
     }
 
@@ -124,10 +128,9 @@ pub fn deinit() void {
     if (base_url_override) |v| allocator.free(v);
     if (supervisor_token) |v| allocator.free(v);
 
-    if (state_file_path.len > 0 and !std.mem.eql(u8, state_file_path, "signalk_auth.json")) {
-        if (!std.mem.eql(u8, state_file_path, "/data/signalk_auth.json")) {
-            allocator.free(state_file_path);
-        }
+    if (state_file_path_allocated) {
+        allocator.free(state_file_path);
+        state_file_path_allocated = false;
     }
 }
 
@@ -451,11 +454,10 @@ fn checkSignalKAvailable(base: []const u8) bool {
 }
 
 fn discoverSignalKViaSupervisor() ?[]u8 {
-    const body = supervisorGet("/apps") catch {
+    const body = supervisorGet("/apps") catch
         supervisorGet("/addons") catch |err| {
-            log.debug("Supervisor app/add-on query failed: {}", .{err});
-            return null;
-        }
+        log.debug("Supervisor app/add-on query failed: {}", .{err});
+        return null;
     };
     defer allocator.free(body);
 
@@ -710,11 +712,10 @@ fn ensureClientId() []u8 {
         allocator,
         "{x:0>2}{x:0>2}{x:0>2}{x:0>2}-{x:0>2}{x:0>2}-{x:0>2}{x:0>2}-{x:0>2}{x:0>2}-{x:0>2}{x:0>2}{x:0>2}{x:0>2}{x:0>2}{x:0>2}",
         .{
-            bytes[0], bytes[1], bytes[2], bytes[3],
-            bytes[4], bytes[5],
-            bytes[6], bytes[7],
-            bytes[8], bytes[9],
-            bytes[10], bytes[11], bytes[12], bytes[13], bytes[14], bytes[15],
+            bytes[0],  bytes[1],  bytes[2],  bytes[3],
+            bytes[4],  bytes[5],  bytes[6],  bytes[7],
+            bytes[8],  bytes[9],  bytes[10], bytes[11],
+            bytes[12], bytes[13], bytes[14], bytes[15],
         },
     ) catch return allocator.dupe(u8, "00000000-0000-4000-8000-000000000000") catch unreachable;
 

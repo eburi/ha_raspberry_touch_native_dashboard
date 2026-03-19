@@ -30,8 +30,9 @@ const PAGE_TITLE_H = 48;
 const ANCHOR_CTRL_H = 120;
 const ANCHOR_MAP_W = DISPLAY_W - NAV_WIDTH;
 const ANCHOR_MAP_H = DISPLAY_H - PAGE_TITLE_H - ANCHOR_CTRL_H;
-const ANCHOR_CENTER_X = Math.round(ANCHOR_MAP_W / 2);
-const ANCHOR_CENTER_Y = Math.round(ANCHOR_MAP_H / 2);
+const ANCHOR_EDGE_PAD = 24;
+const ANCHOR_MIN_ZOOM_METERS = 0.2;
+const ANCHOR_MAX_ZOOM_METERS = 200;
 
 const ANCHOR_CONN_ESTABLISH = 0;
 const ANCHOR_CONN_STREAMING = 1;
@@ -47,6 +48,7 @@ let anchorSelfPos = null;
 let anchorWindDirRad = null;
 let anchorSelfTrack = [];
 let anchorOther = new Map();
+let anchorViewCenter = { x: Math.round(ANCHOR_MAP_W / 2), y: Math.round(ANCHOR_MAP_H / 2) };
 let anchorStatusState = "detecting";
 let anchorStatusMessage = "Detecting SignalK...";
 let anchorLastDataAt = 0;
@@ -212,12 +214,12 @@ function js_anchor_action(action_ptr, action_len, value) {
     const action = readWasmString(action_ptr, action_len);
 
     if (action === "zoom_inc") {
-        anchorZoomMeters = Math.max(0.2, anchorZoomMeters * 0.8);
+        anchorZoomMeters = Math.max(ANCHOR_MIN_ZOOM_METERS, anchorZoomMeters * 0.8);
         redrawAnchorOverlay();
         return;
     }
     if (action === "zoom_dec") {
-        anchorZoomMeters = Math.min(200, anchorZoomMeters * 1.25);
+        anchorZoomMeters = Math.min(ANCHOR_MAX_ZOOM_METERS, anchorZoomMeters * 1.25);
         redrawAnchorOverlay();
         return;
     }
@@ -393,6 +395,8 @@ function hideLineDots() {
 }
 
 function pushTrack(track, maxPoints, updateFn) {
+    const centerX = anchorViewCenter.x;
+    const centerY = anchorViewCenter.y;
     for (let i = 0; i < maxPoints; i += 1) {
         const p = track[track.length - maxPoints + i];
         if (!p || !anchorAnchorPos) {
@@ -400,8 +404,8 @@ function pushTrack(track, maxPoints, updateFn) {
             continue;
         }
         const { dx, dy } = toMeters(anchorAnchorPos.latitude, anchorAnchorPos.longitude, p.latitude, p.longitude);
-        const x = Math.round(ANCHOR_CENTER_X + dx / anchorZoomMeters);
-        const y = Math.round(ANCHOR_CENTER_Y - dy / anchorZoomMeters);
+        const x = Math.round(centerX + dx / anchorZoomMeters);
+        const y = Math.round(centerY - dy / anchorZoomMeters);
         const visible = x >= -10 && y >= -10 && x <= ANCHOR_MAP_W + 10 && y <= ANCHOR_MAP_H + 10;
         updateFn(i, x, y, visible ? 1 : 0);
     }
@@ -414,15 +418,41 @@ function redrawAnchorOverlay() {
         return;
     }
 
+    const offset = toMeters(anchorAnchorPos.latitude, anchorAnchorPos.longitude, anchorSelfPos.latitude, anchorSelfPos.longitude);
+    const halfW = ANCHOR_MAP_W / 2 - ANCHOR_EDGE_PAD;
+    const halfH = ANCHOR_MAP_H / 2 - ANCHOR_EDGE_PAD;
+
+    const neededZoomX = Math.abs(offset.dx) / Math.max(halfW, 1);
+    const neededZoomY = Math.abs(offset.dy) / Math.max(halfH, 1);
+    const neededZoomRadius = anchorAlarmRadiusMeters / Math.max(Math.min(halfW, halfH) * 0.85, 1);
+    const neededZoom = Math.max(neededZoomX, neededZoomY, neededZoomRadius, ANCHOR_MIN_ZOOM_METERS);
+    if (neededZoom > anchorZoomMeters) {
+        anchorZoomMeters = Math.min(ANCHOR_MAX_ZOOM_METERS, neededZoom);
+    }
+
+    const sx = offset.dx / anchorZoomMeters;
+    const sy = offset.dy / anchorZoomMeters;
+    anchorViewCenter = {
+        x: Math.round(ANCHOR_MAP_W / 2 - sx / 2),
+        y: Math.round(ANCHOR_MAP_H / 2 + sy / 2),
+    };
+
+    anchorViewCenter.x = Math.max(ANCHOR_EDGE_PAD, Math.min(ANCHOR_MAP_W - ANCHOR_EDGE_PAD, anchorViewCenter.x));
+    anchorViewCenter.y = Math.max(ANCHOR_EDGE_PAD, Math.min(ANCHOR_MAP_H - ANCHOR_EDGE_PAD, anchorViewCenter.y));
+
+    const anchorX = anchorViewCenter.x;
+    const anchorY = anchorViewCenter.y;
+    wasm.instance.exports.update_anchor_anchor_px(anchorX, anchorY);
+
     const ringDiameter = Math.round((anchorAlarmRadiusMeters * 2) / anchorZoomMeters);
     wasm.instance.exports.update_anchor_ring_px(ringDiameter);
 
-    const offset = toMeters(anchorAnchorPos.latitude, anchorAnchorPos.longitude, anchorSelfPos.latitude, anchorSelfPos.longitude);
-    const boatX = Math.round(ANCHOR_CENTER_X + offset.dx / anchorZoomMeters);
-    const boatY = Math.round(ANCHOR_CENTER_Y - offset.dy / anchorZoomMeters);
-    wasm.instance.exports.update_anchor_boat_px(boatX, boatY);
+    const boatX = Math.round(anchorX + offset.dx / anchorZoomMeters);
+    const boatY = Math.round(anchorY - offset.dy / anchorZoomMeters);
+    const selfHeadingRad = dataHeadingOrWind(anchorSelfPos.headingTrueRad, anchorWindDirRad);
+    wasm.instance.exports.update_anchor_boat_px(boatX, boatY, radToDeg10(selfHeadingRad));
 
-    drawLineDots(ANCHOR_CENTER_X, ANCHOR_CENTER_Y, boatX, boatY);
+    drawLineDots(anchorX, anchorY, boatX, boatY);
 
     const distance = Math.round(Math.sqrt(offset.dx * offset.dx + offset.dy * offset.dy));
     pushWasmStringExport("update_anchor_info", `Distance ${distance} m`);
@@ -442,16 +472,17 @@ function redrawAnchorOverlay() {
     for (let i = 0; i < 6; i += 1) {
         const item = others[i];
         if (!item) {
-            wasm.instance.exports.update_anchor_other_boat(i, 0, 0, 0);
+            wasm.instance.exports.update_anchor_other_boat(i, 0, 0, 0, 0);
             for (let j = 0; j < 20; j += 1) {
                 wasm.instance.exports.update_anchor_other_track_point(i, j, 0, 0, 0);
             }
             continue;
         }
-        const x = Math.round(ANCHOR_CENTER_X + item.o.dx / anchorZoomMeters);
-        const y = Math.round(ANCHOR_CENTER_Y - item.o.dy / anchorZoomMeters);
+        const x = Math.round(anchorX + item.o.dx / anchorZoomMeters);
+        const y = Math.round(anchorY - item.o.dy / anchorZoomMeters);
         const visible = x >= -20 && y >= -20 && x <= ANCHOR_MAP_W + 20 && y <= ANCHOR_MAP_H + 20;
-        wasm.instance.exports.update_anchor_other_boat(i, x, y, visible ? 1 : 0);
+        const otherHeading = dataHeadingOrWind(item.v.headingTrueRad, anchorWindDirRad);
+        wasm.instance.exports.update_anchor_other_boat(i, x, y, visible ? 1 : 0, radToDeg10(otherHeading));
 
         const tr = item.v.track || [];
         for (let j = 0; j < 20; j += 1) {
@@ -461,12 +492,25 @@ function redrawAnchorOverlay() {
                 continue;
             }
             const po = toMeters(anchorAnchorPos.latitude, anchorAnchorPos.longitude, p.latitude, p.longitude);
-            const tx = Math.round(ANCHOR_CENTER_X + po.dx / anchorZoomMeters);
-            const ty = Math.round(ANCHOR_CENTER_Y - po.dy / anchorZoomMeters);
+            const tx = Math.round(anchorX + po.dx / anchorZoomMeters);
+            const ty = Math.round(anchorY - po.dy / anchorZoomMeters);
             const tv = tx >= -10 && ty >= -10 && tx <= ANCHOR_MAP_W + 10 && ty <= ANCHOR_MAP_H + 10;
             wasm.instance.exports.update_anchor_other_track_point(i, j, tx, ty, tv ? 1 : 0);
         }
     }
+}
+
+function radToDeg10(rad) {
+    if (typeof rad !== "number" || !Number.isFinite(rad)) return 0;
+    let deg = (rad * 180) / Math.PI;
+    while (deg < 0) deg += 360;
+    while (deg >= 360) deg -= 360;
+    return Math.round(deg * 10);
+}
+
+function dataHeadingOrWind(headingRad, windRad) {
+    if (typeof headingRad === "number" && Number.isFinite(headingRad)) return headingRad;
+    return windRad;
 }
 
 function setAnchorStatusText(message) {
@@ -532,8 +576,13 @@ function ingestSignalKData(data) {
     const nav = self.navigation || {};
     const env = self.environment || {};
     const pos = nav.position && nav.position.value;
+    const selfHeading = nav.headingTrue && nav.headingTrue.value;
     if (pos && typeof pos.latitude === "number" && typeof pos.longitude === "number") {
-        anchorSelfPos = { latitude: pos.latitude, longitude: pos.longitude };
+        anchorSelfPos = {
+            latitude: pos.latitude,
+            longitude: pos.longitude,
+            headingTrueRad: (typeof selfHeading === "number" && Number.isFinite(selfHeading)) ? selfHeading : null,
+        };
         upsertTrack(anchorSelfTrack, anchorSelfPos, 48);
     }
 
@@ -556,7 +605,7 @@ function ingestSignalKData(data) {
     if (typeof anchorRadius === "number" && Number.isFinite(anchorRadius) && anchorRadius > 0) {
         anchorAlarmRadiusMeters = anchorRadius;
         const target = (ANCHOR_MAP_H * 0.70) / (anchorAlarmRadiusMeters * 2);
-        anchorZoomMeters = Math.max(0.2, 1 / target);
+        anchorZoomMeters = Math.max(ANCHOR_MIN_ZOOM_METERS, 1 / target);
     }
 
     wasm.instance.exports.update_anchor_mode(anchorState === "on" ? 1 : 0);
@@ -569,10 +618,12 @@ function ingestSignalKData(data) {
 
             const p = vNav.position.value;
             if (typeof p.latitude !== "number" || typeof p.longitude !== "number") continue;
+            const vh = vNav.headingTrue && vNav.headingTrue.value;
             const id = vessel.mmsi || key;
             let entry = anchorOther.get(id);
-            if (!entry) entry = { position: null, track: [] };
+            if (!entry) entry = { position: null, track: [], headingTrueRad: null };
             entry.position = { latitude: p.latitude, longitude: p.longitude };
+            entry.headingTrueRad = (typeof vh === "number" && Number.isFinite(vh)) ? vh : null;
             upsertTrack(entry.track, entry.position, 20);
             nextOther.set(id, entry);
         }

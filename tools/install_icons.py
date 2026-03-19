@@ -1,8 +1,11 @@
 #!/usr/bin/env python3
-"""Download Tabler SVG icons, rasterize them, and generate LVGL-ready C assets.
+"""Fetch SVG icons, rasterize them, and generate LVGL-ready C assets.
 
-Reads icon names (one per line) from an icon list file, downloads matching
-Tabler SVG icons, normalizes stroke width, rasterizes them, and generates
+Reads icon entries (one per line) from an icon list file.
+- Entries starting with ``assets/`` are loaded from local files.
+- All other entries are treated as Tabler icon names and downloaded.
+
+The script normalizes stroke width, rasterizes icons, and generates
 LVGL C assets with four variants per icon:
     _S = standard (24 px)
     _P = primary  (32 px)
@@ -23,9 +26,9 @@ Environment overrides:
     SIZE_PRIMARY_PX    Primary size in pixels               (default: 32)
     SIZE_LARGE_PX      Large size in pixels                 (default: 48)
     SIZE_NAV_PX        Nav size in pixels                   (default: 64)
-    OUT_DIR            Output folder                        (default: src/wasm/generated_icons)
+    OUT_DIR            Output folder                        (default: src/generated_icons)
     OUT_BASENAME       Output base name                     (default: tabler_icons)
-    TABLER_BASE_URL    Tabler icons base URL
+    TABLER_BASE_URL    Tabler icons base URL (for non-assets/ entries)
 
 Example:
     .venv/bin/python tools/install_icons.py icons_list.txt
@@ -70,9 +73,13 @@ SIZE_LARGE_PX = int(os.environ.get("SIZE_LARGE_PX", "48"))
 SIZE_NAV_PX = int(os.environ.get("SIZE_NAV_PX", "64"))
 TABLER_BASE_URL = os.environ.get(
     "TABLER_BASE_URL",
-    "https://raw.githubusercontent.com/tabler/tabler-icons/master/icons/outline",
+    "https://raw.githubusercontent.com/tabler/tabler-icons/main/icons/outline",
 )
-OUT_DIR = os.environ.get("OUT_DIR", "src/wasm/generated_icons")
+TABLER_FILLED_BASE_URL = os.environ.get(
+    "TABLER_FILLED_BASE_URL",
+    "https://raw.githubusercontent.com/tabler/tabler-icons/main/icons/filled",
+)
+OUT_DIR = os.environ.get("OUT_DIR", "src/generated_icons")
 OUT_BASENAME = os.environ.get("OUT_BASENAME", "tabler_icons")
 
 VARIANTS = [
@@ -108,6 +115,47 @@ def parse_icon_names(path: str) -> list[str]:
             names.append(line)
             seen.add(line)
     return names
+
+
+def load_svg_source(icon_name: str) -> str:
+    if icon_name.startswith("assets/"):
+        if not os.path.isfile(icon_name):
+            print(f"Error: local SVG asset not found: {icon_name}", file=sys.stderr)
+            sys.exit(2)
+        try:
+            with open(icon_name, "r", encoding="utf-8") as f:
+                return f.read()
+        except Exception as e:
+            print(f"Error: failed to read local asset '{icon_name}': {e}", file=sys.stderr)
+            sys.exit(2)
+
+    urls: list[str] = []
+    if icon_name.endswith("-filled"):
+        base_name = icon_name[: -len("-filled")]
+        if base_name:
+            urls.append(f"{TABLER_FILLED_BASE_URL.rstrip('/')}/{base_name}.svg")
+        urls.append(f"{TABLER_FILLED_BASE_URL.rstrip('/')}/{icon_name}.svg")
+    urls.append(f"{TABLER_BASE_URL.rstrip('/')}/{icon_name}.svg")
+    urls.append(f"{TABLER_FILLED_BASE_URL.rstrip('/')}/{icon_name}.svg")
+
+    for url in urls:
+        try:
+            with urllib.request.urlopen(url) as resp:
+                return resp.read().decode("utf-8")
+        except urllib.error.HTTPError:
+            continue
+        except Exception as e:
+            print(
+                f"Error: failed to download '{icon_name}' ({url}): {e}",
+                file=sys.stderr,
+            )
+            sys.exit(2)
+
+    print(
+        f"Error: failed to download '{icon_name}' from configured Tabler URLs",
+        file=sys.stderr,
+    )
+    sys.exit(2)
 
 
 def force_stroke_width(svg_text: str, stroke: str) -> bytes:
@@ -167,22 +215,7 @@ def main() -> None:
 
     entries: list[dict] = []
     for icon_name in icons:
-        url = f"{TABLER_BASE_URL.rstrip('/')}/{icon_name}.svg"
-        try:
-            with urllib.request.urlopen(url) as resp:
-                svg_raw = resp.read().decode("utf-8")
-        except urllib.error.HTTPError as e:
-            print(
-                f"Error: failed to download '{icon_name}' ({url}): HTTP {e.code}",
-                file=sys.stderr,
-            )
-            sys.exit(2)
-        except Exception as e:
-            print(
-                f"Error: failed to download '{icon_name}' ({url}): {e}",
-                file=sys.stderr,
-            )
-            sys.exit(2)
+        svg_raw = load_svg_source(icon_name)
 
         svg_adjusted = force_stroke_width(svg_raw, STROKE_WIDTH)
         c_ident = sanitize_c_ident(icon_name)

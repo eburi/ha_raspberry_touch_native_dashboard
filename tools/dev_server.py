@@ -88,7 +88,7 @@ fi
 
 addon_name="$($runtime ps --format '{{.Names}}' | awk '/addon_.*ha_raspberry_touch_native_dashboard/ { print; exit }')"
 if [ -z "$addon_name" ]; then
-  echo "Could not find running ha_raspberry_touch_native_dashboard addon container" >&2
+  echo "Could not find running ha_raspberry_touch_native_dashboard app container" >&2
   exit 1
 fi
 
@@ -232,6 +232,11 @@ def main():
     env["PORT"] = str(args.server_port)
     env["WEB_ROOT"] = str(ROOT / "web")
 
+    # Use a local gitignored directory for dev state files (not /data)
+    data_dir = ROOT / ".data"
+    data_dir.mkdir(exist_ok=True)
+    env["SIGNALK_STATE_FILE"] = str(data_dir / "signalk_auth.json")
+
     tunnel_proc = None
     if args.ha_host:
         print(f"[dev] stealing SUPERVISOR_TOKEN from {args.ha_host} ...")
@@ -308,9 +313,16 @@ def main():
             need_server = False
             for path in changed:
                 rel = relpath(path)
-                if rel.startswith("src/wasm/") or rel == "lv_conf.h":
+                if rel.startswith("src/wasm/"):
                     need_wasm = True
-                if rel.startswith("src/server/"):
+                elif rel.startswith("src/server/") or rel.startswith("src/native/"):
+                    need_server = True
+                elif rel.startswith("src/") and not rel.startswith("src/wasm/"):
+                    # Shared code (lv.zig, input.zig, dashboard.zig, generated_icons/)
+                    need_wasm = True
+                    need_server = True
+                if rel == "lv_conf.h":
+                    need_wasm = True
                     need_server = True
                 if rel == "build.zig" or rel == "build.zig.zon":
                     need_wasm = True

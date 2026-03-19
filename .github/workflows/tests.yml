@@ -19,5 +19,8 @@ jobs:
         with:
           version: 0.14.1
 
+      - name: Check formatting
+        run: zig fmt --check src/ tests/ build.zig
+
       - name: Run tests
         run: zig build test -Doptimize=ReleaseSafe

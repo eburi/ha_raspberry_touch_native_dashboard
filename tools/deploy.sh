@@ -4,19 +4,21 @@ set -euo pipefail
 # Deploy ha_raspberry_touch_native_dashboard HA App to a Home Assistant device.
 #
 # Usage:
-#   ./local_deploy.sh [user@host]
+#   tools/deploy.sh [user@host]
 #
 # Default target: root@192.168.46.222
 #
 # This script:
-# 1. Assembles a self-contained app directory in /tmp/ha_raspberry_touch_native_dashboard_app/
-# 2. Copies it to /addons/ha_raspberry_touch_native_dashboard/ on the HA device via scp
-# 3. Prints instructions for installing/rebuilding in HA
+# 1. Builds the WASM module locally (sanity check)
+# 2. Assembles a self-contained app directory in /tmp/
+# 3. Copies it to /addons/ha_raspberry_touch_native_dashboard/ on the HA device
+# 4. Installs (first time) or rebuilds the app on the HA device
+# 5. Starts the app and tails logs
 
 TARGET="${1:-root@192.168.46.222}"
 APP_NAME="ha_raspberry_touch_native_dashboard"
 SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
-PROJECT_DIR="$SCRIPT_DIR"
+PROJECT_DIR="$(cd "$SCRIPT_DIR/.." && pwd)"
 BUILD_DIR="/tmp/${APP_NAME}_app"
 
 # Add project-local zig to PATH (installed under .local/bin)
@@ -34,7 +36,7 @@ if ! command -v zig >/dev/null 2>&1; then
 fi
 
 echo "Running local build check (zig build wasm)..."
-zig build wasm -Doptimize=ReleaseSmall
+(cd "$PROJECT_DIR" && zig build wasm -Doptimize=ReleaseSmall)
 echo "Local build check passed."
 echo ""
 
@@ -63,19 +65,35 @@ echo ""
 echo "Copying to $TARGET:/addons/$APP_NAME/ ..."
 ssh "$TARGET" "rm -rf /addons/$APP_NAME && mkdir -p /addons/$APP_NAME"
 scp -r "$BUILD_DIR/"* "$TARGET:/addons/$APP_NAME/"
+echo ""
 
+# 3. Reload the app store so HA picks up the new/updated files
+echo "Reloading HA app store..."
+ssh "$TARGET" "ha store reload" || true
+sleep 2
+
+# 4. Check if the app is already installed, install or rebuild accordingly
+echo "Checking app status..."
+APP_SLUG="local_$APP_NAME"
+
+if ssh "$TARGET" "ha apps info $APP_SLUG" >/dev/null 2>&1; then
+    echo "App already installed. Rebuilding..."
+    ssh "$TARGET" "ha apps rebuild $APP_SLUG"
+else
+    echo "App not installed. Installing..."
+    ssh "$TARGET" "ha apps install $APP_SLUG"
+fi
+
+# 5. Start the app
+echo "Starting app..."
+ssh "$TARGET" "ha apps start $APP_SLUG" || true
+sleep 2
+
+# 6. Tail logs
 echo ""
 echo "=== Deploy complete ==="
 echo ""
-echo "Next steps on Home Assistant:"
-echo "  1. Go to Settings -> Apps -> App Store"
-echo "  2. Click (top right) -> Check for updates / Reload"
-echo "  3. Find 'Raspberry Pi Touchscreen native Dashboard for HAOS' in the Local apps section"
-echo "  4. Click Install (first time) or Rebuild (update)"
-echo "  5. Start the app and check logs"
+echo "Tailing logs (Ctrl+C to stop):"
 echo ""
-echo "Or via CLI on the HA device:"
-echo "  ha store reload && ha apps install local_$APP_NAME   # first time"
-echo "  ha apps rebuild local_$APP_NAME                      # update"
-echo "  ha apps start local_$APP_NAME"
-echo "  ha apps logs local_$APP_NAME"
+ssh "$TARGET" "ha apps logs $APP_SLUG --follow" || \
+    echo "(Could not tail logs — check manually with: ha apps logs $APP_SLUG)"

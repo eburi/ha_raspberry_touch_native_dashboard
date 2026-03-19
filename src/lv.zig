@@ -1,8 +1,7 @@
 ///! Zig bridge to LVGL C API.
 ///! This module imports the LVGL C headers via @cImport and re-exports
-///! the symbols that our Zig code needs. All WASM modules import this
+///! the symbols that our Zig code needs. All modules import this
 ///! instead of using @cImport directly, keeping the C boundary in one place.
-
 pub const c = @cImport({
     @cDefine("LV_CONF_INCLUDE_SIMPLE", "1");
     @cInclude("lvgl.h");
@@ -27,6 +26,8 @@ pub const lv_display_set_buffers = c.lv_display_set_buffers;
 pub const lv_display_set_render_mode = c.lv_display_set_render_mode;
 pub const lv_display_set_color_format = c.lv_display_set_color_format;
 pub const lv_display_flush_ready = c.lv_display_flush_ready;
+pub const lv_display_set_user_data = c.lv_display_set_user_data;
+pub const lv_display_get_user_data = c.lv_display_get_user_data;
 pub const LV_DISPLAY_RENDER_MODE_FULL = c.LV_DISPLAY_RENDER_MODE_FULL;
 
 // --- Input device ---
@@ -141,6 +142,7 @@ pub const lv_button_create = c.lv_button_create;
 pub const lv_image_create = if (@hasDecl(c, "lv_image_create")) c.lv_image_create else c.lv_img_create;
 pub const lv_image_set_src = if (@hasDecl(c, "lv_image_set_src")) c.lv_image_set_src else c.lv_img_set_src;
 pub const lv_image_set_rotation = if (@hasDecl(c, "lv_image_set_rotation")) c.lv_image_set_rotation else c.lv_img_set_angle;
+pub const lv_image_set_pivot = if (@hasDecl(c, "lv_image_set_pivot")) c.lv_image_set_pivot else c.lv_img_set_pivot;
 
 // --- Switch ---
 pub const lv_switch_create = c.lv_switch_create;
@@ -264,6 +266,14 @@ pub extern const tabler_icon_alert_square_rounded_S: anyopaque;
 pub extern const tabler_icon_alert_square_rounded_P: anyopaque;
 pub extern const tabler_icon_alert_square_rounded_L: anyopaque;
 pub extern const tabler_icon_alert_square_rounded_N: anyopaque;
+pub extern const tabler_icon_triangle_filled_S: anyopaque;
+pub extern const tabler_icon_triangle_filled_P: anyopaque;
+pub extern const tabler_icon_triangle_filled_L: anyopaque;
+pub extern const tabler_icon_triangle_filled_N: anyopaque;
+pub extern const tabler_icon_assets_compass_north_svgrepo_com_svg_S: anyopaque;
+pub extern const tabler_icon_assets_compass_north_svgrepo_com_svg_P: anyopaque;
+pub extern const tabler_icon_assets_compass_north_svgrepo_com_svg_L: anyopaque;
+pub extern const tabler_icon_assets_compass_north_svgrepo_com_svg_N: anyopaque;
 
 // --- Palette ---
 pub const LV_PALETTE_BLUE = c.LV_PALETTE_BLUE;

@@ -1,7 +1,6 @@
 ///! Hardware probe — detect framebuffer and input devices at startup.
 ///! If hardware is present, native LVGL can run on the physical display.
 ///! If absent, the server runs in web-only mode.
-
 const std = @import("std");
 
 pub const HwInfo = struct {

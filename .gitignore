@@ -5,6 +5,9 @@ zig-out/
 # Generated WASM (built from source)
 web/dashboard.wasm
 
+# Local dev data (state files, auth tokens)
+.data/
+
 # OS
 .DS_Store
 .local
