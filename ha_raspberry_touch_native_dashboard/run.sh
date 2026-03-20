@@ -23,11 +23,34 @@ if [ -f "$OPTIONS_FILE" ]; then
     PORT="$(jq -r '.port // 8765' "$OPTIONS_FILE")"
     LOG_LEVEL="$(jq -r '.log_level // "info"' "$OPTIONS_FILE")"
     SIGNALK_URL="$(jq -r '.signalk_url // ""' "$OPTIONS_FILE")"
+
+    # Build entity config JSON from options (only include non-empty values)
+    ENTITY_CONFIG="$(jq -c '{
+        latitude:            .entity_latitude,
+        longitude:           .entity_longitude,
+        log:                 .entity_log,
+        heading:             .entity_heading,
+        stw:                 .entity_stw,
+        sog:                 .entity_sog,
+        cog:                 .entity_cog,
+        aws:                 .entity_aws,
+        awa:                 .entity_awa,
+        tws:                 .entity_tws,
+        twd:                 .entity_twd,
+        barometric_pressure: .entity_barometric_pressure,
+        distance_24h:        .entity_distance_24h,
+        speed_24h:           .entity_speed_24h,
+        datetime:            .entity_datetime,
+        sail_main:           .entity_sail_main,
+        sail_jib:            .entity_sail_jib,
+        sail_code0:          .entity_sail_code0
+    } | with_entries(select(.value != null and .value != ""))' "$OPTIONS_FILE")"
 else
     log_warning "No options file found, using defaults"
     PORT="8765"
     LOG_LEVEL="info"
     SIGNALK_URL=""
+    ENTITY_CONFIG="{}"
 fi
 
 log_info "Port: ${PORT}"
@@ -35,10 +58,12 @@ log_info "Log level: ${LOG_LEVEL}"
 if [ -n "${SIGNALK_URL}" ]; then
     log_info "SignalK URL override: ${SIGNALK_URL}"
 fi
+log_info "Entity config: ${ENTITY_CONFIG}"
 
 export PORT
 export WEB_ROOT="/app/web"
 export LOG_LEVEL
+export ENTITY_CONFIG
 if [ -n "${SIGNALK_URL}" ]; then
     export SIGNALK_URL
 fi

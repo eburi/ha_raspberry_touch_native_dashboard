@@ -57,25 +57,80 @@ let anchorConnectionUiState = ANCHOR_CONN_ESTABLISH;
 let anchorStatusShown = "";
 let anchorLoaderRotationDeg10 = 0;
 
-// Sensor entity ID → WASM sensor_id mapping
-const SENSOR_MAP = {
-    "sensor.primrose_latitude": 0,
-    "sensor.primrose_longitude": 1,
-    "sensor.primrose_log": 2,
-    "sensor.primrose_heading_true": 3,
-    "sensor.primrose_stw": 4,
-    "sensor.primrose_sog": 5,
-    "sensor.primrose_cog": 6,
-    "sensor.primrose_aws": 7,
-    "sensor.primrose_awa": 8,
-    "sensor.tws_mean_15min": 9,
-    "sensor.twd_mean_15min": 10,
-    "sensor.barometric_pressure": 11,
-    "sensor.primrose_log_change_24h": 12,
-    "sensor.average_speed_over_24h": 13,
+// ---- Entity configuration ----
+// Maps logical sensor names to { entityId, sensorId } pairs.
+// Populated from server-sent "entity_config" message (from config.yaml).
+// Falls back to built-in defaults if the server sends no config.
+//
+// Config key -> sensor_id mapping (stable, must match dashboard.zig):
+//   latitude=0, longitude=1, log=2, heading=3, stw=4, sog=5, cog=6,
+//   aws=7, awa=8, tws=9, twd=10, barometric_pressure=11,
+//   distance_24h=12, speed_24h=13, datetime=14
+const SENSOR_KEY_TO_ID = {
+    latitude: 0, longitude: 1, log: 2, heading: 3, stw: 4, sog: 5, cog: 6,
+    aws: 7, awa: 8, tws: 9, twd: 10, barometric_pressure: 11,
+    distance_24h: 12, speed_24h: 13, datetime: 14,
 };
-const HA_DATETIME_ENTITY = "sensor.date_time_iso";
+
+// Default entity IDs (used when no config is provided by the server)
+const DEFAULT_ENTITY_CONFIG = {
+    latitude: "sensor.primrose_latitude",
+    longitude: "sensor.primrose_longitude",
+    log: "sensor.primrose_log",
+    heading: "sensor.primrose_heading_true",
+    stw: "sensor.primrose_stw",
+    sog: "sensor.primrose_sog",
+    cog: "sensor.primrose_cog",
+    aws: "sensor.primrose_aws",
+    awa: "sensor.primrose_awa",
+    tws: "sensor.tws_mean_15min",
+    twd: "sensor.twd_mean_15min",
+    barometric_pressure: "sensor.barometric_pressure",
+    distance_24h: "sensor.primrose_log_change_24h",
+    speed_24h: "sensor.average_speed_over_24h",
+    datetime: "sensor.date_time_iso",
+    sail_main: "input_select.sail_configuration_main",
+    sail_jib: "input_select.sail_configuration_jib",
+    sail_code0: "input_boolean.sail_configuration_code_0_set",
+};
+
+// Active entity config (overridden by server entity_config message)
+let entityConfig = { ...DEFAULT_ENTITY_CONFIG };
+
+// Sensor entity ID -> WASM sensor_id mapping (built from entityConfig)
+let SENSOR_MAP = {};
+let HA_DATETIME_ENTITY = "";
 const SENSOR_ID_DATETIME = 14;
+
+// Sail and toggle entities (built from entityConfig)
+let SAIL_SELECT_ENTITIES = [];
+let TOGGLE_ENTITY = "";
+
+/**
+ * Rebuild all entity ID lookup maps from the current entityConfig.
+ * Called on startup and whenever entity_config is received from the server.
+ */
+function rebuildEntityMaps() {
+    SENSOR_MAP = {};
+    for (const [key, sensorId] of Object.entries(SENSOR_KEY_TO_ID)) {
+        if (key === "datetime") continue; // handled separately
+        const entityId = entityConfig[key];
+        if (entityId) {
+            SENSOR_MAP[entityId] = sensorId;
+        }
+    }
+
+    HA_DATETIME_ENTITY = entityConfig.datetime || "";
+
+    SAIL_SELECT_ENTITIES = [];
+    if (entityConfig.sail_main) SAIL_SELECT_ENTITIES.push(entityConfig.sail_main);
+    if (entityConfig.sail_jib) SAIL_SELECT_ENTITIES.push(entityConfig.sail_jib);
+
+    TOGGLE_ENTITY = entityConfig.sail_code0 || "";
+}
+
+// Initialize maps with defaults
+rebuildEntityMaps();
 
 // Display precision map from HA entity registry: entity_id -> precision (integer)
 // Populated from "entity_registry" message sent by the server.
@@ -84,13 +139,6 @@ const displayPrecisionMap = {};
 // Cache of last-known entity state and attributes for re-formatting
 // when display precision data arrives after initial states.
 const lastEntityState = {};
-
-// Sail and toggle entities (used only for subscribe list and routing state updates)
-const SAIL_SELECT_ENTITIES = [
-    "input_select.sail_configuration_main",
-    "input_select.sail_configuration_jib",
-];
-const TOGGLE_ENTITY = "input_boolean.sail_configuration_code_0_set";
 
 /**
  * Determine the base path for this app.
@@ -355,20 +403,20 @@ function handleStateUpdate(entityId, state, attributes) {
     }
 
     // Sail input_select entities — pass raw state string to WASM
-    if (entityId === "input_select.sail_configuration_main") {
+    if (entityConfig.sail_main && entityId === entityConfig.sail_main) {
         const s = writeStringToWasm(state);
         if (s) wasm.instance.exports.update_sail_main(s.ptr, s.len);
         return;
     }
 
-    if (entityId === "input_select.sail_configuration_jib") {
+    if (entityConfig.sail_jib && entityId === entityConfig.sail_jib) {
         const s = writeStringToWasm(state);
         if (s) wasm.instance.exports.update_sail_jib(s.ptr, s.len);
         return;
     }
 
     // Toggle entity — pass raw state string to WASM
-    if (entityId === "input_boolean.sail_configuration_code_0_set") {
+    if (entityConfig.sail_code0 && entityId === entityConfig.sail_code0) {
         const s = writeStringToWasm(state);
         if (s) wasm.instance.exports.update_code0(s.ptr, s.len);
         return;
@@ -807,6 +855,39 @@ function handleWSMessage(msg) {
                     );
                 }
             }
+        }
+    } else if (msg.type === "entity_config") {
+        // Server-sent entity ID configuration (from config.yaml)
+        if (msg.data && typeof msg.data === "object") {
+            // Merge server config over defaults (server values take precedence)
+            entityConfig = { ...DEFAULT_ENTITY_CONFIG };
+            for (const [key, value] of Object.entries(msg.data)) {
+                if (typeof value === "string" && value.length > 0) {
+                    entityConfig[key] = value;
+                }
+            }
+            rebuildEntityMaps();
+
+            // Push sail entity IDs into WASM so dashboard.zig uses configured values
+            // Slots: 0=sail_main, 1=sail_jib, 2=sail_code0
+            if (wasm) {
+                const sailSlots = [
+                    { slot: 0, key: "sail_main" },
+                    { slot: 1, key: "sail_jib" },
+                    { slot: 2, key: "sail_code0" },
+                ];
+                for (const { slot, key } of sailSlots) {
+                    const entityId = entityConfig[key];
+                    if (entityId) {
+                        const s = writeStringToWasm(entityId);
+                        if (s) {
+                            wasm.instance.exports.set_entity_id(slot, s.ptr, s.len);
+                        }
+                    }
+                }
+            }
+
+            console.log("[WS] Entity config applied:", entityConfig);
         }
     } else if (msg.type === "entity_registry") {
         // Entity registry with display precision: msg.data is {entity_id: precision, ...}

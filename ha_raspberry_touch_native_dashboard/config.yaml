@@ -1,7 +1,7 @@
 # Home Assistant App configuration
 # https://developers.home-assistant.io/docs/apps
 name: "Raspberry Pi Touchscreen native Dashboard for HAOS"
-version: "0.5.2"
+version: "0.6.0"
 slug: ha_raspberry_touch_native_dashboard
 description: >-
   Touch-screen dashboard built with LVGL graphics library, compiled to WASM
@@ -30,14 +30,54 @@ panel_icon: "mdi:view-dashboard"
 panel_title: "Raspberry Pi Touchscreen native Dashboard for HAOS"
 
 # User-configurable options (available via bashio::config)
+#
+# Entity IDs: Configure the HA entity IDs that the dashboard reads from
+# and writes to. All entity_* options map a logical dashboard function
+# to a specific HA entity. Change these to match your own HA setup.
 options:
   port: 8765
   log_level: info
   signalk_url: ""
+  entity_latitude: "sensor.primrose_latitude"
+  entity_longitude: "sensor.primrose_longitude"
+  entity_log: "sensor.primrose_log"
+  entity_heading: "sensor.primrose_heading_true"
+  entity_stw: "sensor.primrose_stw"
+  entity_sog: "sensor.primrose_sog"
+  entity_cog: "sensor.primrose_cog"
+  entity_aws: "sensor.primrose_aws"
+  entity_awa: "sensor.primrose_awa"
+  entity_tws: "sensor.tws_mean_15min"
+  entity_twd: "sensor.twd_mean_15min"
+  entity_barometric_pressure: "sensor.barometric_pressure"
+  entity_distance_24h: "sensor.primrose_log_change_24h"
+  entity_speed_24h: "sensor.average_speed_over_24h"
+  entity_datetime: "sensor.date_time_iso"
+  entity_sail_main: "input_select.sail_configuration_main"
+  entity_sail_jib: "input_select.sail_configuration_jib"
+  entity_sail_code0: "input_boolean.sail_configuration_code_0_set"
 schema:
   port: "int(1,65535)"
   log_level: "list(error|warning|info|debug)"
-  signalk_url: "str"
+  signalk_url: "str?"
+  entity_latitude: "str?"
+  entity_longitude: "str?"
+  entity_log: "str?"
+  entity_heading: "str?"
+  entity_stw: "str?"
+  entity_sog: "str?"
+  entity_cog: "str?"
+  entity_aws: "str?"
+  entity_awa: "str?"
+  entity_tws: "str?"
+  entity_twd: "str?"
+  entity_barometric_pressure: "str?"
+  entity_distance_24h: "str?"
+  entity_speed_24h: "str?"
+  entity_datetime: "str?"
+  entity_sail_main: "str?"
+  entity_sail_jib: "str?"
+  entity_sail_code0: "str?"
 
 # Startup behavior
 boot: auto

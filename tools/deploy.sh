@@ -45,7 +45,10 @@ rm -rf "$BUILD_DIR"
 mkdir -p "$BUILD_DIR"
 
 # Copy HA app files
-cp "$PROJECT_DIR/$APP_NAME/config.yaml"  "$BUILD_DIR/"
+# Strip the "image:" line from config.yaml for local deploy — when present, HA
+# Supervisor tries to pull from the registry instead of building the Dockerfile.
+# The image line is only needed for CI/published builds.
+sed '/^image:/d' "$PROJECT_DIR/$APP_NAME/config.yaml" > "$BUILD_DIR/config.yaml"
 cp "$PROJECT_DIR/$APP_NAME/Dockerfile"   "$BUILD_DIR/"
 cp "$PROJECT_DIR/$APP_NAME/run.sh"       "$BUILD_DIR/"
 cp "$PROJECT_DIR/$APP_NAME/build.yaml"   "$BUILD_DIR/" 2>/dev/null || true
@@ -70,23 +73,49 @@ echo ""
 # 3. Reload the app store so HA picks up the new/updated files
 echo "Reloading HA app store..."
 ssh "$TARGET" "ha store reload" || true
-sleep 2
 
 # 4. Check if the app is already installed, install or rebuild accordingly
 echo "Checking app status..."
 APP_SLUG="local_$APP_NAME"
 
-if ssh "$TARGET" "ha apps info $APP_SLUG" >/dev/null 2>&1; then
-    echo "App already installed. Rebuilding..."
-    ssh "$TARGET" "ha apps rebuild $APP_SLUG"
+# Use "ha apps info" and check for "state:" to distinguish between a genuinely
+# installed app and a ghost registration left over from a previous image-based
+# install.  After uninstall the slug may still be known but the app has no state.
+APP_INFO=$(ssh "$TARGET" "ha apps info $APP_SLUG --no-progress --raw-json" 2>/dev/null) || APP_INFO=""
+APP_STATE=""
+if [ -n "$APP_INFO" ]; then
+    # Extract state value portably (works on both macOS and Linux)
+    APP_STATE=$(echo "$APP_INFO" | sed -n 's/.*"state" *: *"\([^"]*\)".*/\1/p' | head -1) || APP_STATE=""
+fi
+
+if [ -n "$APP_STATE" ] && [ "$APP_STATE" != "unknown" ]; then
+    # App is genuinely installed
+    echo "App installed (state: $APP_STATE). Stopping before rebuild/update..."
+    ssh "$TARGET" "ha apps stop $APP_SLUG --no-progress" 2>/dev/null || true
+
+    echo "Trying rebuild..."
+    REBUILD_OUTPUT=$(ssh "$TARGET" "ha apps rebuild $APP_SLUG --no-progress" 2>&1) || true
+    echo "$REBUILD_OUTPUT"
+
+    if echo "$REBUILD_OUTPUT" | grep -qi "version changed\|use update"; then
+        echo "Version changed. Reloading store and updating..."
+        ssh "$TARGET" "ha store reload" || true
+        ssh "$TARGET" "ha apps update $APP_SLUG --no-progress"
+    elif echo "$REBUILD_OUTPUT" | grep -qi "error\|failed"; then
+        echo "Rebuild failed with unexpected error. Trying update as fallback..."
+        ssh "$TARGET" "ha apps update $APP_SLUG --no-progress"
+    else
+        echo "Rebuild succeeded."
+    fi
 else
+    # App is not installed (or only a ghost slug from a previous image install)
     echo "App not installed. Installing..."
-    ssh "$TARGET" "ha apps install $APP_SLUG"
+    ssh "$TARGET" "ha apps install $APP_SLUG --no-progress"
 fi
 
 # 5. Start the app
 echo "Starting app..."
-ssh "$TARGET" "ha apps start $APP_SLUG" || true
+ssh "$TARGET" "ha apps start $APP_SLUG --no-progress" || true
 sleep 2
 
 # 6. Tail logs
@@ -95,5 +124,5 @@ echo "=== Deploy complete ==="
 echo ""
 echo "Tailing logs (Ctrl+C to stop):"
 echo ""
-ssh "$TARGET" "ha apps logs $APP_SLUG --follow" || \
+ssh "$TARGET" "ha apps logs $APP_SLUG --follow --no-progress" || \
     echo "(Could not tail logs — check manually with: ha apps logs $APP_SLUG)"

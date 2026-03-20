@@ -204,7 +204,7 @@ from the running app container and creates an SSH tunnel to the HA supervisor AP
 - `web/dashboard.wasm` is gitignored — always rebuild with `zig build wasm`
 - `src/generated_icons/` is checked in (generated C code, not gitignored)
 - The server reads config from env vars: `PORT`, `WEB_ROOT`, `LOG_LEVEL`,
-  `SUPERVISOR_TOKEN`, `HA_URL`, `SIGNALK_URL`
+  `SUPERVISOR_TOKEN`, `HA_URL`, `SIGNALK_URL`, `ENTITY_CONFIG`
 - Shared modules (`lv`, `input`, `dashboard`) are created separately per target in
   `build.zig` — one set for WASM, another for native/server. Each needs LVGL include paths.
 - `dashboard.zig` uses `@import("lv")` (module name), not `@import("lv.zig")` (relative path),
@@ -217,3 +217,58 @@ from the running app container and creates an SSH tunnel to the HA supervisor AP
 - Do **not** set `ingress_entry: "/"` in `config.yaml` — `/` is already the default,
   and setting it explicitly used to cause double-slash (`//`) paths from HA's ingress
   proxy. The HA docs are misleading on this. Simply omit `ingress_entry` entirely.
+
+## Entity Configuration
+
+All Home Assistant entity IDs are **configurable** — never hardcode them. Users set
+entity IDs in `config.yaml` options; defaults match the original development values.
+
+### Config Flow
+
+```
+config.yaml options  →  /data/options.json  →  run.sh reads with jq
+    →  ENTITY_CONFIG env var (JSON blob)  →  server readConfig()
+    →  browser via WebSocket "entity_config" message
+    →  native display via applyEntityConfig()
+```
+
+### Adding a New Entity
+
+1. **`config.yaml`** — Add an `entity_<name>` option with `str?` schema and a default:
+   ```yaml
+   entity_my_sensor:
+     name: My Sensor entity ID
+     default: sensor.my_default_entity
+   schema:
+     - name: entity_my_sensor
+       type: str?
+   ```
+
+2. **`run.sh`** — Read it from options.json and add to the `ENTITY_CONFIG` JSON blob:
+   ```bash
+   ENTITY_MY_SENSOR=$(jq -r '.entity_my_sensor // empty' /data/options.json)
+   # Add to JSON construction
+   ```
+
+3. **`web/main.js`** — Add to `DEFAULT_ENTITY_CONFIG`, `SENSOR_KEY_TO_ID` (if sensor),
+   and update `rebuildEntityMaps()`. For sensor entities, assign the next available
+   sensor_id integer.
+
+4. **`src/dashboard.zig`** — If the entity needs WASM-side usage (like sail entities
+   that send callbacks), add an `ENTITY_*` slot constant, increase `ENTITY_COUNT`,
+   and add the default in `init_entity_ids()`.
+
+5. **`src/wasm/main.zig`** — The `set_entity_id` export already delegates to
+   `dashboard.setEntityId()` — no changes needed unless adding new exports.
+
+6. **`src/native/main.zig`** — Add the key to `applyEntityConfig()`'s key list if
+   the entity needs native-side support.
+
+### Key Design Points
+
+- **Sensor IDs** (0–14) are a stable ABI between JS and WASM (`dashboard.zig`
+  defines them as constants, JS maps entity_id → sensor_id).
+- **Sail entity IDs** (slots 0–2) are used in both JS (routing state updates) and
+  Zig (sent back via `PlatformCallbacks` when buttons are clicked).
+- The server does **not** interpret entity keys — it passes the JSON blob through.
+- Defaults are preserved so existing users need no configuration changes.

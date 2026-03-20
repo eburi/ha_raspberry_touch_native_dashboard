@@ -35,9 +35,17 @@ var allocator: std.mem.Allocator = undefined;
 /// facil.io pub/sub channel name for broadcasting state changes to all clients.
 const BROADCAST_CHANNEL = "ha_states";
 
+/// Entity config JSON string — sent to each connecting client.
+var entity_config_json: []const u8 = "{}";
+
 /// Initialize the WebSocket module.
 pub fn init(alloc: std.mem.Allocator) void {
     allocator = alloc;
+}
+
+/// Set the entity config JSON to send to clients on connect.
+pub fn setEntityConfig(json: []const u8) void {
+    entity_config_json = json;
 }
 
 /// Called from the HTTP on_upgrade callback in main.zig when a WebSocket
@@ -137,6 +145,20 @@ fn onClose(context: ?*ClientContext, uuid: isize) anyerror!void {
 
 /// Handle "get_states" — send current cached states to this client.
 fn handleGetStates(handle: WsHandle) void {
+    // Send entity config first so the client knows which entities to watch
+    const entity_msg = std.fmt.allocPrint(
+        allocator,
+        "{{\"type\":\"entity_config\",\"data\":{s}}}",
+        .{entity_config_json},
+    ) catch |err| {
+        std.log.err("WS: failed to format entity_config JSON: {}", .{err});
+        return;
+    };
+    defer allocator.free(entity_msg);
+    WsHandler.write(handle, entity_msg, true) catch |err| {
+        std.log.err("WS: failed to send entity config: {}", .{err});
+    };
+
     const states_json = ha_client.getCachedStatesJson() orelse {
         // No states available yet — send empty
         const empty = "{\"type\":\"states\",\"data\":[]}";

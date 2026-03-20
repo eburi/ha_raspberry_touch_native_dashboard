@@ -33,10 +33,19 @@ var is_running: bool = false;
 /// Callback for HA service calls — will be set by the server before start()
 var ha_call_service_fn: ?*const fn (domain: []const u8, service: []const u8, entity_id: []const u8, extra_json: ?[]const u8) void = null;
 
+/// Entity config JSON (kept for the LVGL thread to parse during init)
+var entity_config_json: []const u8 = "{}";
+
 /// Set the function used to call HA services.
 /// Must be called before start() so platform callbacks can reach HA.
 pub fn setHaCallService(func: *const fn (domain: []const u8, service: []const u8, entity_id: []const u8, extra_json: ?[]const u8) void) void {
     ha_call_service_fn = func;
+}
+
+/// Set the entity configuration JSON. Must be called before start().
+/// The JSON is parsed during LVGL init to configure sail entity IDs.
+pub fn setEntityConfig(json: []const u8) void {
+    entity_config_json = json;
 }
 
 /// Probe for hardware and start the native display if found.
@@ -124,6 +133,9 @@ fn lvglLoop(width: u32, height: u32) void {
         .anchor_action = &nativeAnchorAction,
     });
 
+    // Apply entity config from server config (sail entity IDs)
+    applyEntityConfig();
+
     // Create the dashboard
     dashboard.init(width, height);
     dashboard.create();
@@ -198,5 +210,42 @@ fn nativeAnchorAction(action_ptr: [*]const u8, action_len: i32, value: f64) void
         var buf: [256]u8 = undefined;
         const extra = std.fmt.bufPrint(&buf, "\"action\":\"{s}\",\"value\":{d:.1}", .{ action, value }) catch return;
         callService("script", action, "", extra);
+    }
+}
+
+// ============================================================
+// Entity config parsing
+// ============================================================
+
+/// Parse the entity_config_json and push sail entity IDs into dashboard.
+fn applyEntityConfig() void {
+    const json = entity_config_json;
+    if (json.len <= 2) return; // "{}" or empty
+
+    const parsed = std.json.parseFromSlice(std.json.Value, std.heap.page_allocator, json, .{}) catch |err| {
+        log.warn("Failed to parse ENTITY_CONFIG JSON: {} — using defaults", .{err});
+        return;
+    };
+    defer parsed.deinit();
+
+    const obj = switch (parsed.value) {
+        .object => |o| o,
+        else => return,
+    };
+
+    // Slot mapping: 0=sail_main, 1=sail_jib, 2=sail_code0
+    const keys = [_][]const u8{ "sail_main", "sail_jib", "sail_code0" };
+    for (keys, 0..) |key, slot| {
+        if (obj.get(key)) |val| {
+            switch (val) {
+                .string => |s| {
+                    if (s.len > 0) {
+                        dashboard.setEntityId(@intCast(slot), s.ptr, @intCast(s.len));
+                        log.info("Entity {s} = {s}", .{ key, s });
+                    }
+                },
+                else => {},
+            }
+        }
     }
 }

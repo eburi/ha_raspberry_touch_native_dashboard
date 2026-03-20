@@ -118,6 +118,10 @@ export fn get_framebuffer_size() i32 {
 // Re-export dashboard update functions as WASM exports for JS
 // ============================================================
 
+export fn set_entity_id(slot: i32, ptr: [*]const u8, len: i32) void {
+    dashboard.setEntityId(slot, ptr, len);
+}
+
 export fn update_sensor(sensor_id: i32, value_ptr: [*]const u8, value_len: i32) void {
     dashboard.update_sensor(sensor_id, value_ptr, value_len);
 }

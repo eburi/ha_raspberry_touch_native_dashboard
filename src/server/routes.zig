@@ -44,12 +44,17 @@ fn handleHealth(r: zap.Request) void {
 }
 
 fn handleConfig(r: zap.Request, config: *const Config) void {
-    _ = config;
+    var buf: [4096]u8 = undefined;
+    const json = std.fmt.bufPrint(&buf,
+        \\{{"display":{{"width":1280,"height":720}},"version":"0.6.0","entities":{s}}}
+    , .{config.entity_config_json}) catch {
+        r.setStatus(.internal_server_error);
+        r.sendBody("{\"error\":\"config too large\"}") catch {};
+        return;
+    };
     r.setStatus(.ok);
     r.setHeader("Content-Type", "application/json") catch {};
-    r.sendBody(
-        \\{"display":{"width":1280,"height":720},"version":"0.1.0"}
-    ) catch {};
+    r.sendBody(json) catch {};
 }
 
 fn handleHaProxy(r: zap.Request, path: []const u8, config: *const Config) void {

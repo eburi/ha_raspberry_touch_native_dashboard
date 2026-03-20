@@ -71,6 +71,10 @@ pub const Config = struct {
     supervisor_token: ?[]const u8 = null,
     signalk_url: ?[]const u8 = null,
     log_level: std.log.Level = .info,
+    /// Raw JSON string of entity ID mappings (e.g. {"latitude":"sensor.foo",...}).
+    /// Passed through to the browser client as-is. The server does not interpret
+    /// individual entity keys — only the JS client needs them.
+    entity_config_json: []const u8 = "{}",
 };
 
 var config: Config = .{};
@@ -117,9 +121,11 @@ pub fn main() !void {
     if (config.signalk_url) |url| {
         std.log.info("SignalK URL override configured: {s}", .{url});
     }
+    std.log.info("Entity config: {s}", .{config.entity_config_json});
 
     // Initialize modules
     websocket.init(allocator);
+    websocket.setEntityConfig(config.entity_config_json);
     routes.init(allocator);
     signalk_client.init(allocator);
     signalk_client.setBaseUrlOverride(config.signalk_url);
@@ -142,6 +148,7 @@ pub fn main() !void {
 
     // Start native display if hardware is present (framebuffer + touch)
     native_display.setHaCallService(&haCallServiceBridge);
+    native_display.setEntityConfig(config.entity_config_json);
     const has_native = native_display.start() catch |err| blk: {
         std.log.err("Failed to start native display: {}", .{err});
         break :blk false;
@@ -322,6 +329,15 @@ fn readConfig() Config {
             cfg.signalk_url = url;
         } else {
             std.heap.page_allocator.free(url);
+        }
+    } else |_| {}
+
+    // Entity ID mapping (JSON blob from run.sh)
+    if (std.process.getEnvVarOwned(std.heap.page_allocator, "ENTITY_CONFIG")) |json| {
+        if (json.len > 0) {
+            cfg.entity_config_json = json;
+        } else {
+            std.heap.page_allocator.free(json);
         }
     } else |_| {}
 

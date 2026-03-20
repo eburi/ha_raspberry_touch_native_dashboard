@@ -334,10 +334,15 @@ fn ensureAuthAndPoll(base: []const u8) !void {
             return;
         }
         clearToken();
+        log.debug("Saved token invalid, cleared", .{});
     }
 
     const request_href = getRequestHref();
     defer if (request_href) |v| allocator.free(v);
+
+    if (request_href) |href| {
+        log.debug("Found persisted request_href: {s}", .{href});
+    }
 
     if (request_href == null) {
         publishStatus(.requesting, "Requesting SignalK device auth...");
@@ -369,7 +374,12 @@ fn ensureAuthAndPoll(base: []const u8) !void {
 
     publishStatus(.waiting_approval, "approve auth request");
 
-    const poll = try getNoToken(base, request_href.?);
+    const poll = getNoToken(base, request_href.?) catch |err| {
+        log.warn("Polling access request failed ({s}): {} — clearing stale request", .{ request_href.?, err });
+        clearRequestHref();
+        savePersistentState();
+        return err;
+    };
     defer allocator.free(poll);
 
     const parsed_poll = std.json.parseFromSlice(std.json.Value, allocator, poll, .{}) catch return error.InvalidResponse;

@@ -181,10 +181,50 @@ pub fn setPlatformCallbacks(callbacks: PlatformCallbacks) void {
     platform_callbacks = callbacks;
 }
 
-// HA entity IDs (null-terminated for convenience, length excludes sentinel)
-const HA_ENTITY_SAIL_MAIN = "input_select.sail_configuration_main";
-const HA_ENTITY_SAIL_JIB = "input_select.sail_configuration_jib";
-const HA_ENTITY_CODE0 = "input_boolean.sail_configuration_code_0_set";
+// HA entity IDs — runtime-configurable from the platform layer.
+// Defaults match the original hardcoded values. Overridden via
+// setEntityId() from the platform (WASM or native) when config arrives.
+const MAX_ENTITY_ID_LEN = 128;
+
+const ENTITY_SAIL_MAIN: usize = 0;
+const ENTITY_SAIL_JIB: usize = 1;
+const ENTITY_CODE0: usize = 2;
+const ENTITY_COUNT: usize = 3;
+
+const EntityBuf = struct {
+    buf: [MAX_ENTITY_ID_LEN]u8 = undefined,
+    len: usize = 0,
+};
+
+var entity_ids: [ENTITY_COUNT]EntityBuf = init_entity_ids();
+
+fn init_entity_ids() [ENTITY_COUNT]EntityBuf {
+    var ids: [ENTITY_COUNT]EntityBuf = .{EntityBuf{}} ** ENTITY_COUNT;
+    const defaults = [ENTITY_COUNT][]const u8{
+        "input_select.sail_configuration_main",
+        "input_select.sail_configuration_jib",
+        "input_boolean.sail_configuration_code_0_set",
+    };
+    for (0..ENTITY_COUNT) |i| {
+        @memcpy(ids[i].buf[0..defaults[i].len], defaults[i]);
+        ids[i].len = defaults[i].len;
+    }
+    return ids;
+}
+
+fn getEntitySlice(index: usize) []const u8 {
+    if (index >= ENTITY_COUNT) return "";
+    return entity_ids[index].buf[0..entity_ids[index].len];
+}
+
+/// Set a configurable entity ID at runtime.
+///   slot: 0=sail_main, 1=sail_jib, 2=sail_code0
+pub fn setEntityId(slot: i32, ptr: [*]const u8, len: i32) void {
+    const s: usize = if (slot >= 0 and slot < ENTITY_COUNT) @intCast(slot) else return;
+    const l: usize = if (len > 0 and len <= MAX_ENTITY_ID_LEN) @intCast(len) else return;
+    @memcpy(entity_ids[s].buf[0..l], ptr[0..l]);
+    entity_ids[s].len = l;
+}
 
 // ============================================================
 // Public API
@@ -1123,9 +1163,10 @@ fn sailMainClickCb(e: ?*lv.lv_event_t) callconv(.C) void {
         updateSailMainHighlight(option_index);
         if (platform_callbacks.sail_config_changed) |cb| {
             const opt = sail_main_labels[option_index];
+            const entity = getEntitySlice(ENTITY_SAIL_MAIN);
             cb(
-                HA_ENTITY_SAIL_MAIN.ptr,
-                HA_ENTITY_SAIL_MAIN.len,
+                entity.ptr,
+                @intCast(entity.len),
                 opt,
                 @intCast(std.mem.len(opt)),
             );
@@ -1141,9 +1182,10 @@ fn sailJibClickCb(e: ?*lv.lv_event_t) callconv(.C) void {
         updateSailJibHighlight(option_index);
         if (platform_callbacks.sail_config_changed) |cb| {
             const opt = sail_jib_labels[option_index];
+            const entity = getEntitySlice(ENTITY_SAIL_JIB);
             cb(
-                HA_ENTITY_SAIL_JIB.ptr,
-                HA_ENTITY_SAIL_JIB.len,
+                entity.ptr,
+                @intCast(entity.len),
                 opt,
                 @intCast(std.mem.len(opt)),
             );
@@ -1156,9 +1198,10 @@ fn code0ClickCb(e: ?*lv.lv_event_t) callconv(.C) void {
     code0_active = !code0_active;
     updateCode0Style();
     if (platform_callbacks.sail_toggle_changed) |cb| {
+        const entity = getEntitySlice(ENTITY_CODE0);
         cb(
-            HA_ENTITY_CODE0.ptr,
-            HA_ENTITY_CODE0.len,
+            entity.ptr,
+            @intCast(entity.len),
             if (code0_active) @as(i32, 1) else @as(i32, 0),
         );
     }
