@@ -129,6 +129,8 @@ fn onMessage(context: ?*ClientContext, handle: WsHandle, message: []const u8, is
         handleCallService(root.object);
     } else if (std.mem.eql(u8, type_str, "anchor_action")) {
         handleAnchorAction(handle, root.object);
+    } else if (std.mem.eql(u8, type_str, "power_off")) {
+        std.log.info("WS: power_off requested — shutting down", .{});
     } else {
         std.log.warn("WS: unknown message type: {s}", .{type_str});
     }

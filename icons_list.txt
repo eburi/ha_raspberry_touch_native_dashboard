@@ -8,4 +8,5 @@ sailboat
 loader-2
 alert-square-rounded
 triangle-filled
+settings
 assets/compass-north-svgrepo-com.svg

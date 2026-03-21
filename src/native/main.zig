@@ -131,6 +131,7 @@ fn lvglLoop(width: u32, height: u32) void {
         .sail_config_changed = &nativeSailConfigChanged,
         .sail_toggle_changed = &nativeSailToggleChanged,
         .anchor_action = &nativeAnchorAction,
+        .power_off = &nativePowerOff,
     });
 
     // Apply entity config from server config (sail entity IDs)
@@ -211,6 +212,10 @@ fn nativeAnchorAction(action_ptr: [*]const u8, action_len: i32, value: f64) void
         const extra = std.fmt.bufPrint(&buf, "\"action\":\"{s}\",\"value\":{d:.1}", .{ action, value }) catch return;
         callService("script", action, "", extra);
     }
+}
+
+fn nativePowerOff() void {
+    log.info("Power off requested — shutting down", .{});
 }
 
 // ============================================================

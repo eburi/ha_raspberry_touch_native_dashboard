@@ -949,6 +949,12 @@ async function main() {
                 js_sail_config_changed: js_sail_config_changed,
                 js_sail_toggle_changed: js_sail_toggle_changed,
                 js_anchor_action: js_anchor_action,
+                js_power_off: function() {
+                    console.log("[Power] Sending power_off to server");
+                    if (ws && ws.readyState === WebSocket.OPEN) {
+                        ws.send(JSON.stringify({ type: "power_off" }));
+                    }
+                },
             },
         };
 

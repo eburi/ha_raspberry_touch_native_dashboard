@@ -37,6 +37,7 @@ extern fn js_get_time() f64;
 extern fn js_sail_config_changed(entity_ptr: [*]const u8, entity_len: i32, option_ptr: [*]const u8, option_len: i32) void;
 extern fn js_sail_toggle_changed(entity_ptr: [*]const u8, entity_len: i32, state: i32) void;
 extern fn js_anchor_action(action_ptr: [*]const u8, action_len: i32, value: f64) void;
+extern fn js_power_off() void;
 
 // Zig-calling-convention wrappers for the JS extern fns.
 // PlatformCallbacks uses Zig function pointers; extern fns have C/WASM calling convention.
@@ -48,6 +49,9 @@ fn wasmSailToggleChanged(entity_ptr: [*]const u8, entity_len: i32, state: i32) v
 }
 fn wasmAnchorAction(action_ptr: [*]const u8, action_len: i32, value: f64) void {
     js_anchor_action(action_ptr, action_len, value);
+}
+fn wasmPowerOff() void {
+    js_power_off();
 }
 
 /// Tick callback for LVGL — returns elapsed ms since start
@@ -85,6 +89,7 @@ export fn init(width: i32, height: i32) void {
         .sail_config_changed = &wasmSailConfigChanged,
         .sail_toggle_changed = &wasmSailToggleChanged,
         .anchor_action = &wasmAnchorAction,
+        .power_off = &wasmPowerOff,
     });
 
     // Create dashboard UI

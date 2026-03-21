@@ -160,6 +160,19 @@ pub const lv_bar_create = c.lv_bar_create;
 pub const lv_bar_set_value = c.lv_bar_set_value;
 pub const lv_bar_set_range = c.lv_bar_set_range;
 
+// --- Animation ---
+pub const lv_anim_t = c.lv_anim_t;
+pub const lv_anim_init = c.lv_anim_init;
+pub const lv_anim_set_var = c.lv_anim_set_var;
+pub const lv_anim_set_exec_cb = c.lv_anim_set_exec_cb;
+pub const lv_anim_set_values = c.lv_anim_set_values;
+pub const lv_anim_set_duration = c.lv_anim_set_duration;
+pub const lv_anim_set_path_cb = c.lv_anim_set_path_cb;
+pub const lv_anim_set_completed_cb = c.lv_anim_set_completed_cb;
+pub const lv_anim_start = c.lv_anim_start;
+pub const lv_anim_delete = c.lv_anim_delete;
+pub const lv_anim_path_linear = c.lv_anim_path_linear;
+
 // --- LED ---
 pub const lv_led_create = c.lv_led_create;
 pub const lv_led_set_color = c.lv_led_set_color;
@@ -270,6 +283,10 @@ pub extern const tabler_icon_triangle_filled_S: anyopaque;
 pub extern const tabler_icon_triangle_filled_P: anyopaque;
 pub extern const tabler_icon_triangle_filled_L: anyopaque;
 pub extern const tabler_icon_triangle_filled_N: anyopaque;
+pub extern const tabler_icon_settings_S: anyopaque;
+pub extern const tabler_icon_settings_P: anyopaque;
+pub extern const tabler_icon_settings_L: anyopaque;
+pub extern const tabler_icon_settings_N: anyopaque;
 pub extern const tabler_icon_assets_compass_north_svgrepo_com_svg_S: anyopaque;
 pub extern const tabler_icon_assets_compass_north_svgrepo_com_svg_P: anyopaque;
 pub extern const tabler_icon_assets_compass_north_svgrepo_com_svg_L: anyopaque;
