@@ -563,14 +563,6 @@ fn createGpsCard(parent: ?*lv.lv_obj_t, card_w: i32, card_h: i32, title: [*:0]co
         lv.lv_obj_set_flex_align(row, lv.LV_FLEX_ALIGN_START, lv.LV_FLEX_ALIGN_CENTER, lv.LV_FLEX_ALIGN_CENTER);
         lv.lv_obj_remove_flag(row, lv.LV_OBJ_FLAG_SCROLLABLE);
 
-        const lat_key = lv.lv_label_create(row);
-        if (lat_key) |lk| {
-            lv.lv_label_set_text(lk, "Lat");
-            lv.lv_obj_set_width(lk, 34);
-            lv.lv_obj_set_style_text_color(lk, lv.lv_color_hex(COL_TEXT_DIM), lv.LV_PART_MAIN);
-            lv.lv_obj_set_style_text_font(lk, lv.lv_font_montserrat_14, lv.LV_PART_MAIN);
-        }
-
         const lat_val = lv.lv_label_create(row);
         if (lat_val) |lvv| {
             lv.lv_label_set_text(lvv, "--");
@@ -590,14 +582,6 @@ fn createGpsCard(parent: ?*lv.lv_obj_t, card_w: i32, card_h: i32, title: [*:0]co
         lv.lv_obj_set_flex_flow(row, lv.LV_FLEX_FLOW_ROW);
         lv.lv_obj_set_flex_align(row, lv.LV_FLEX_ALIGN_START, lv.LV_FLEX_ALIGN_CENTER, lv.LV_FLEX_ALIGN_CENTER);
         lv.lv_obj_remove_flag(row, lv.LV_OBJ_FLAG_SCROLLABLE);
-
-        const lon_key = lv.lv_label_create(row);
-        if (lon_key) |lk| {
-            lv.lv_label_set_text(lk, "Lon");
-            lv.lv_obj_set_width(lk, 34);
-            lv.lv_obj_set_style_text_color(lk, lv.lv_color_hex(COL_TEXT_DIM), lv.LV_PART_MAIN);
-            lv.lv_obj_set_style_text_font(lk, lv.lv_font_montserrat_14, lv.LV_PART_MAIN);
-        }
 
         const lon_val = lv.lv_label_create(row);
         if (lon_val) |lvv| {
