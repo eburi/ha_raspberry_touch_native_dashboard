@@ -33,6 +33,9 @@ var is_running: bool = false;
 /// Callback for HA service calls — will be set by the server before start()
 var ha_call_service_fn: ?*const fn (domain: []const u8, service: []const u8, entity_id: []const u8, extra_json: ?[]const u8) void = null;
 
+/// Callback for host shutdown — will be set by the server before start()
+var shutdown_fn: ?*const fn () void = null;
+
 /// Entity config JSON (kept for the LVGL thread to parse during init)
 var entity_config_json: []const u8 = "{}";
 
@@ -40,6 +43,12 @@ var entity_config_json: []const u8 = "{}";
 /// Must be called before start() so platform callbacks can reach HA.
 pub fn setHaCallService(func: *const fn (domain: []const u8, service: []const u8, entity_id: []const u8, extra_json: ?[]const u8) void) void {
     ha_call_service_fn = func;
+}
+
+/// Set the function used to initiate a host shutdown.
+/// Must be called before start().
+pub fn setShutdownFn(func: *const fn () void) void {
+    shutdown_fn = func;
 }
 
 /// Set the entity configuration JSON. Must be called before start().
@@ -215,7 +224,12 @@ fn nativeAnchorAction(action_ptr: [*]const u8, action_len: i32, value: f64) void
 }
 
 fn nativePowerOff() void {
-    log.info("Power off requested — shutting down", .{});
+    log.info("Power off requested — initiating host shutdown", .{});
+    if (shutdown_fn) |doShutdown| {
+        doShutdown();
+    } else {
+        log.warn("No shutdown function set — power off ignored", .{});
+    }
 }
 
 // ============================================================

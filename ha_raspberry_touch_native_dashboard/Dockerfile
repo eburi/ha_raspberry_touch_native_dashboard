@@ -31,6 +31,9 @@ RUN zig build server -Doptimize=ReleaseSafe
 ARG BUILD_FROM
 FROM $BUILD_FROM
 
+# Install dbus tools for host shutdown (dbus-send -> systemd PowerOff)
+RUN apk add --no-cache dbus
+
 # Copy built artifacts
 COPY --from=builder /build/zig-out/bin/lvgl-server /usr/local/bin/lvgl-server
 COPY --from=builder /build/web/ /app/web/

@@ -15,6 +15,7 @@ const zap = @import("zap");
 
 const ha_client = @import("ha_client.zig");
 const signalk_client = @import("signalk_client.zig");
+const shutdown = @import("shutdown.zig");
 
 /// The WsHandle type from Zap's WebSocket module.
 const WsHandle = zap.WebSockets.WsHandle;
@@ -130,7 +131,8 @@ fn onMessage(context: ?*ClientContext, handle: WsHandle, message: []const u8, is
     } else if (std.mem.eql(u8, type_str, "anchor_action")) {
         handleAnchorAction(handle, root.object);
     } else if (std.mem.eql(u8, type_str, "power_off")) {
-        std.log.info("WS: power_off requested — shutting down", .{});
+        std.log.info("WS: power_off requested — initiating host shutdown", .{});
+        shutdown.initiate();
     } else {
         std.log.warn("WS: unknown message type: {s}", .{type_str});
     }

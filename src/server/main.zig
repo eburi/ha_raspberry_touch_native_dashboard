@@ -23,6 +23,7 @@ const websocket = @import("websocket.zig");
 const ha_client = @import("ha_client.zig");
 const signalk_client = @import("signalk_client.zig");
 const native_display = @import("native_display");
+const shutdown = @import("shutdown.zig");
 
 var runtime_log_level: std.log.Level = .info;
 var runtime_log_mutex: std.Thread.Mutex = .{};
@@ -148,6 +149,7 @@ pub fn main() !void {
 
     // Start native display if hardware is present (framebuffer + touch)
     native_display.setHaCallService(&haCallServiceBridge);
+    native_display.setShutdownFn(&shutdown.initiate);
     native_display.setEntityConfig(config.entity_config_json);
     const has_native = native_display.start() catch |err| blk: {
         std.log.err("Failed to start native display: {}", .{err});
