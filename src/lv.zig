@@ -204,6 +204,7 @@ pub const LV_OPA_COVER = c.LV_OPA_COVER;
 pub const LV_OPA_TRANSP = c.LV_OPA_TRANSP;
 pub const LV_OPA_50 = c.LV_OPA_50;
 pub const LV_PART_MAIN = c.LV_PART_MAIN;
+pub const LV_PART_INDICATOR = c.LV_PART_INDICATOR;
 pub const LV_PART_ITEMS = c.LV_PART_ITEMS;
 pub const LV_ANIM_OFF = c.LV_ANIM_OFF;
 pub const LV_TEXT_ALIGN_LEFT = c.LV_TEXT_ALIGN_LEFT;
