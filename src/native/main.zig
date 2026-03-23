@@ -267,4 +267,10 @@ fn applyEntityConfig() void {
             }
         }
     }
+
+    // Tank entity IDs are passed through to JS via the server's
+    // entity_config broadcast. The native display does not need to
+    // store them separately — tank state updates arrive as HA state
+    // changes which are handled by the JS/WASM pipeline or by
+    // direct calls to dashboard.update_tank_level() from the server.
 }

@@ -5,9 +5,10 @@
 ///!
 ///! Pages:
 ///!   0 — Logbook:      Position + 24h log sensor cards
-///!   1 — Anchor Alarm: Anchor watch with map, alarm ring, and controls
-///!   2 — Sails:        Main sail, jib & code 0 configuration
-///!   3 — Settings:     Power off with long-press animation
+///!   1 — Tanks:        Four vertical tank level indicators
+///!   2 — Anchor Alarm: Anchor watch with map, alarm ring, and controls
+///!   3 — Sails:        Main sail, jib & code 0 configuration
+///!   4 — Settings:     Power off with long-press animation
 ///!
 ///! This file is the coordinator — it delegates to sub-modules for each
 ///! page and the navigation bar, while preserving the public API surface.
@@ -17,6 +18,7 @@ const lv = @import("lv");
 const theme = @import("dashboard/theme.zig");
 const navbar = @import("dashboard/navbar.zig");
 const logbook = @import("dashboard/logbook.zig");
+const tanks = @import("dashboard/tanks.zig");
 const anchor = @import("dashboard/anchor.zig");
 const sails = @import("dashboard/sails.zig");
 const settings = @import("dashboard/settings.zig");
@@ -37,6 +39,12 @@ pub const SENSOR_ID_BARO = logbook.SENSOR_ID_BARO;
 pub const SENSOR_ID_DISTANCE_24H = logbook.SENSOR_ID_DISTANCE_24H;
 pub const SENSOR_ID_SPEED_24H = logbook.SENSOR_ID_SPEED_24H;
 pub const SENSOR_ID_DATETIME = logbook.SENSOR_ID_DATETIME;
+
+// Re-export tank sensor ID constants
+pub const SENSOR_ID_TANK_FUEL = tanks.SENSOR_ID_TANK_FUEL;
+pub const SENSOR_ID_TANK_WATER_PORT = tanks.SENSOR_ID_TANK_WATER_PORT;
+pub const SENSOR_ID_TANK_WATER_STBD = tanks.SENSOR_ID_TANK_WATER_STBD;
+pub const SENSOR_ID_TANK_WATER_STBD_AFT = tanks.SENSOR_ID_TANK_WATER_STBD_AFT;
 
 // Re-export entity constants
 pub const ENTITY_SAIL_MAIN = sails.ENTITY_SAIL_MAIN;
@@ -122,6 +130,10 @@ pub fn setEntityId(slot: i32, ptr: [*]const u8, len: i32) void {
 
 pub fn update_sensor(sensor_id: i32, value_ptr: [*]const u8, value_len: i32) void {
     logbook.update_sensor(sensor_id, value_ptr, value_len);
+}
+
+pub fn update_tank_level(tank_index: i32, value_ptr: [*]const u8, value_len: i32) void {
+    tanks.update_tank_level(tank_index, value_ptr, value_len);
 }
 
 pub fn update_sail_main(value_ptr: [*]const u8, value_len: i32) void {
@@ -212,6 +224,7 @@ fn createPages(parent: ?*lv.lv_obj_t) void {
         // Populate page content
         switch (i) {
             theme.PAGE_LOGBOOK => logbook.create(container, page_w, screen_h),
+            theme.PAGE_TANKS => tanks.create(container, page_w, screen_h),
             theme.PAGE_ANCHOR => anchor.create(container, page_w, screen_h),
             theme.PAGE_SAILS => sails.create(container, page_w, screen_h),
             theme.PAGE_SETTINGS => settings.create(container),

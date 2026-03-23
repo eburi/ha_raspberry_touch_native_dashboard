@@ -9,4 +9,5 @@ loader-2
 alert-square-rounded
 triangle-filled
 settings
+ripple
 assets/compass-north-svgrepo-com.svg

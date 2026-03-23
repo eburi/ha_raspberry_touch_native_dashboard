@@ -43,7 +43,11 @@ if [ -f "$OPTIONS_FILE" ]; then
         datetime:            .entity_datetime,
         sail_main:           .entity_sail_main,
         sail_jib:            .entity_sail_jib,
-        sail_code0:          .entity_sail_code0
+        sail_code0:          .entity_sail_code0,
+        tank_fuel:           .entity_tank_fuel,
+        tank_water_port:     .entity_tank_water_port,
+        tank_water_stbd:     .entity_tank_water_stbd,
+        tank_water_stbd_aft: .entity_tank_water_stbd_aft
     } | with_entries(select(.value != null and .value != ""))' "$OPTIONS_FILE")"
 else
     log_warning "No options file found, using defaults"

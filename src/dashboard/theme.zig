@@ -32,10 +32,11 @@ pub const PAGE_TITLE_H = 48; // page title row height
 // Page indices
 // ============================================================
 pub const PAGE_LOGBOOK: usize = 0;
-pub const PAGE_ANCHOR: usize = 1;
-pub const PAGE_SAILS: usize = 2;
-pub const PAGE_SETTINGS: usize = 3;
-pub const PAGE_COUNT: usize = 4;
+pub const PAGE_TANKS: usize = 1;
+pub const PAGE_ANCHOR: usize = 2;
+pub const PAGE_SAILS: usize = 3;
+pub const PAGE_SETTINGS: usize = 4;
+pub const PAGE_COUNT: usize = 5;
 
 // ============================================================
 // UI helpers
@@ -150,6 +151,7 @@ pub fn createCardRow(parent: ?*lv.lv_obj_t, page_w: u32, y_offset: i32, row_h: i
 pub fn navIconForPage(page_index: usize) *const anyopaque {
     return switch (page_index) {
         PAGE_LOGBOOK => &lv.tabler_icon_api_book_N,
+        PAGE_TANKS => &lv.tabler_icon_ripple_N,
         PAGE_ANCHOR => &lv.tabler_icon_anchor_N,
         PAGE_SAILS => &lv.tabler_icon_sailboat_N,
         PAGE_SETTINGS => &lv.tabler_icon_settings_N,
@@ -160,6 +162,7 @@ pub fn navIconForPage(page_index: usize) *const anyopaque {
 pub fn titleIconForPage(page_index: usize) *const anyopaque {
     return switch (page_index) {
         PAGE_LOGBOOK => &lv.tabler_icon_api_book_P,
+        PAGE_TANKS => &lv.tabler_icon_ripple_P,
         PAGE_ANCHOR => &lv.tabler_icon_anchor_P,
         PAGE_SAILS => &lv.tabler_icon_sailboat_P,
         PAGE_SETTINGS => &lv.tabler_icon_settings_P,

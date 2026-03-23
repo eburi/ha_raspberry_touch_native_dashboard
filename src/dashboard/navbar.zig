@@ -7,10 +7,10 @@ const theme = @import("theme.zig");
 // ============================================================
 
 /// Page container objects (one per page, shown/hidden).
-var page_containers: [theme.PAGE_COUNT]?*lv.lv_obj_t = .{ null, null, null, null };
+var page_containers: [theme.PAGE_COUNT]?*lv.lv_obj_t = .{ null, null, null, null, null };
 
 /// Nav icon button objects (for highlight tracking).
-var nav_buttons: [theme.PAGE_COUNT]?*lv.lv_obj_t = .{ null, null, null, null };
+var nav_buttons: [theme.PAGE_COUNT]?*lv.lv_obj_t = .{ null, null, null, null, null };
 
 var current_page: usize = theme.PAGE_LOGBOOK;
 
@@ -47,7 +47,7 @@ pub fn create(parent: ?*lv.lv_obj_t, nav_w: u32, screen_h: u32) void {
     lv.lv_obj_set_flex_flow(bar, lv.LV_FLEX_FLOW_COLUMN);
     lv.lv_obj_set_flex_align(bar, lv.LV_FLEX_ALIGN_SPACE_EVENLY, lv.LV_FLEX_ALIGN_CENTER, lv.LV_FLEX_ALIGN_CENTER);
 
-    const page_indices = [theme.PAGE_COUNT]usize{ theme.PAGE_LOGBOOK, theme.PAGE_ANCHOR, theme.PAGE_SAILS, theme.PAGE_SETTINGS };
+    const page_indices = [theme.PAGE_COUNT]usize{ theme.PAGE_LOGBOOK, theme.PAGE_TANKS, theme.PAGE_ANCHOR, theme.PAGE_SAILS, theme.PAGE_SETTINGS };
 
     for (0..theme.PAGE_COUNT) |i| {
         nav_buttons[i] = createNavButton(bar, nav_w, page_indices[i]);

@@ -131,6 +131,10 @@ export fn update_sensor(sensor_id: i32, value_ptr: [*]const u8, value_len: i32) 
     dashboard.update_sensor(sensor_id, value_ptr, value_len);
 }
 
+export fn update_tank_level(tank_index: i32, value_ptr: [*]const u8, value_len: i32) void {
+    dashboard.update_tank_level(tank_index, value_ptr, value_len);
+}
+
 export fn update_sail_main(value_ptr: [*]const u8, value_len: i32) void {
     dashboard.update_sail_main(value_ptr, value_len);
 }

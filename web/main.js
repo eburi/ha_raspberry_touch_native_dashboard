@@ -72,6 +72,14 @@ const SENSOR_KEY_TO_ID = {
     distance_24h: 12, speed_24h: 13, datetime: 14,
 };
 
+// Tank sensor key -> tank index mapping (matches dashboard/tanks.zig order)
+const TANK_KEY_TO_INDEX = {
+    tank_fuel: 0,
+    tank_water_port: 1,
+    tank_water_stbd: 2,
+    tank_water_stbd_aft: 3,
+};
+
 // Default entity IDs (used when no config is provided by the server)
 const DEFAULT_ENTITY_CONFIG = {
     latitude: "sensor.primrose_latitude",
@@ -92,6 +100,10 @@ const DEFAULT_ENTITY_CONFIG = {
     sail_main: "input_select.sail_configuration_main",
     sail_jib: "input_select.sail_configuration_jib",
     sail_code0: "input_boolean.sail_configuration_code_0_set",
+    tank_fuel: "sensor.victron_mqtt_tank_23_tank_level",
+    tank_water_port: "sensor.victron_mqtt_tank_21_tank_level",
+    tank_water_stbd: "sensor.victron_mqtt_tank_22_tank_level",
+    tank_water_stbd_aft: "sensor.safiery_starlink_tank_sensor_id_26_level",
 };
 
 // Active entity config (overridden by server entity_config message)
@@ -99,6 +111,7 @@ let entityConfig = { ...DEFAULT_ENTITY_CONFIG };
 
 // Sensor entity ID -> WASM sensor_id mapping (built from entityConfig)
 let SENSOR_MAP = {};
+let TANK_MAP = {};
 let HA_DATETIME_ENTITY = "";
 const SENSOR_ID_DATETIME = 14;
 
@@ -117,6 +130,14 @@ function rebuildEntityMaps() {
         const entityId = entityConfig[key];
         if (entityId) {
             SENSOR_MAP[entityId] = sensorId;
+        }
+    }
+
+    TANK_MAP = {};
+    for (const [key, tankIndex] of Object.entries(TANK_KEY_TO_INDEX)) {
+        const entityId = entityConfig[key];
+        if (entityId) {
+            TANK_MAP[entityId] = tankIndex;
         }
     }
 
@@ -399,6 +420,15 @@ function handleStateUpdate(entityId, state, attributes) {
         // Cache raw state+attributes for re-formatting when precision data arrives
         lastEntityState[entityId] = { state, attributes };
         pushSensorValue(sensorId, formatSensorState(state, attributes, entityId));
+        return;
+    }
+
+    // Check tank map
+    const tankIndex = TANK_MAP[entityId];
+    if (tankIndex !== undefined) {
+        const stateStr = String(state);
+        const s = writeStringToWasm(stateStr);
+        if (s) wasm.instance.exports.update_tank_level(tankIndex, s.ptr, s.len);
         return;
     }
 
@@ -800,6 +830,7 @@ function connectWebSocket() {
                 type: "subscribe",
                 entities: [
                     ...Object.keys(SENSOR_MAP),
+                    ...Object.keys(TANK_MAP),
                     HA_DATETIME_ENTITY,
                     ...SAIL_SELECT_ENTITIES,
                     TOGGLE_ENTITY,
