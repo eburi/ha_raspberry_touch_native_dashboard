@@ -1,7 +1,7 @@
 # Home Assistant App configuration
 # https://developers.home-assistant.io/docs/apps
 name: "Raspberry Pi Touchscreen native Dashboard for HAOS"
-version: "0.9.1"
+version: "0.9.2"
 slug: ha_raspberry_touch_native_dashboard
 description: >-
   Touch-screen dashboard built with LVGL graphics library, compiled to WASM
@@ -23,6 +23,21 @@ host_dbus: true
 devices:
   - /dev/fb0
   - /dev/input/event0
+  - /dev/input/event1
+  - /dev/input/event2
+  - /dev/input/event3
+  - /dev/input/event4
+  - /dev/input/event5
+  - /dev/input/event6
+  - /dev/input/event7
+  - /dev/input/event8
+  - /dev/input/event9
+  - /dev/input/event10
+  - /dev/input/event11
+  - /dev/input/event12
+  - /dev/input/event13
+  - /dev/input/event14
+  - /dev/input/event15
 
 # Ingress (web UI served through HA proxy)
 ingress: true
