@@ -97,6 +97,9 @@ pub const Fbdev = struct {
     /// LVGL draw buffer
     draw_buf: ?[*]u8 = null,
 
+    /// LVGL output rotation (applies before flush callback)
+    rotation: u32 = lv.LV_DISPLAY_ROTATION_0,
+
     /// Open the framebuffer device, query screen info, and mmap.
     pub fn init(path: []const u8) !Fbdev {
         var self = Fbdev{};
@@ -177,6 +180,7 @@ pub const Fbdev = struct {
         // Create the LVGL display
         self.display = lv.lv_display_create(@intCast(self.width), @intCast(self.height));
         if (self.display) |disp| {
+            lv.lv_display_set_rotation(disp, self.rotation);
             // Store self pointer so the flush callback can access our mmap'd memory
             lv.lv_display_set_user_data(disp, self);
             lv.lv_display_set_flush_cb(disp, flushCb);

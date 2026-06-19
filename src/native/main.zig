@@ -73,13 +73,32 @@ pub fn start() !bool {
         return false;
     };
 
-    const width = if (fbdev.width > 0) fbdev.width else DEFAULT_WIDTH;
-    const height = if (fbdev.height > 0) fbdev.height else DEFAULT_HEIGHT;
+    const physical_width = if (fbdev.width > 0) fbdev.width else DEFAULT_WIDTH;
+    const physical_height = if (fbdev.height > 0) fbdev.height else DEFAULT_HEIGHT;
+
+    var ui_width = physical_width;
+    var ui_height = physical_height;
+
+    // The RPi Touch Display 2 reports a portrait framebuffer (720x1280).
+    // Run the dashboard in landscape by rotating output 90 degrees CCW.
+    if (physical_height > physical_width) {
+        fbdev.rotation = lv.LV_DISPLAY_ROTATION_270;
+        ui_width = physical_height;
+        ui_height = physical_width;
+        log.info("Portrait framebuffer detected ({d}x{d}); using landscape UI ({d}x{d}) with 90° CCW rotation", .{
+            physical_width,
+            physical_height,
+            ui_width,
+            ui_height,
+        });
+    } else {
+        fbdev.rotation = lv.LV_DISPLAY_ROTATION_0;
+    }
 
     // Initialize touch input if available
     if (hw.has_touch) {
         const input_path = hw.input_device_path orelse "/dev/input/event0";
-        if (Evdev.init(input_path, width, height)) |ev| {
+        if (Evdev.init(input_path, physical_width, physical_height, ui_width, ui_height, fbdev.rotation)) |ev| {
             evdev = ev;
         } else |err| {
             log.warn("Failed to initialize touch input {s}: {} — continuing without touch", .{ input_path, err });
@@ -89,10 +108,10 @@ pub fn start() !bool {
 
     // Start the LVGL thread
     should_stop.store(false, .release);
-    lvgl_thread = try std.Thread.spawn(.{}, lvglLoop, .{ width, height });
+    lvgl_thread = try std.Thread.spawn(.{}, lvglLoop, .{ ui_width, ui_height });
     is_running = true;
 
-    log.info("Native display started: {d}x{d}", .{ width, height });
+    log.info("Native display started: physical={d}x{d}, ui={d}x{d}", .{ physical_width, physical_height, ui_width, ui_height });
     return true;
 }
 

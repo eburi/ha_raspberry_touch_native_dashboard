@@ -9,8 +9,10 @@ test "evdev default state is uninitialized" {
     try std.testing.expectEqual(false, device.pressed);
     try std.testing.expectEqual(@as(i32, 0), device.abs_x);
     try std.testing.expectEqual(@as(i32, 0), device.abs_y);
-    try std.testing.expectEqual(@as(u32, 0), device.display_w);
-    try std.testing.expectEqual(@as(u32, 0), device.display_h);
+    try std.testing.expectEqual(@as(u32, 0), device.physical_w);
+    try std.testing.expectEqual(@as(u32, 0), device.physical_h);
+    try std.testing.expectEqual(@as(u32, 0), device.logical_w);
+    try std.testing.expectEqual(@as(u32, 0), device.logical_h);
 }
 
 test "evdev deinit is safe when unopened" {

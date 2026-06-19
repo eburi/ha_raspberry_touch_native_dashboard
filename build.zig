@@ -71,6 +71,7 @@ pub fn build(b: *std.Build) !void {
         .optimize = optimize,
     });
     test_evdev_mod.addImport("input", test_input_mod);
+    test_evdev_mod.addImport("lv", test_lv_mod);
     native_tests.root_module.addImport("evdev", test_evdev_mod);
 
     const ha_client_mod = b.createModule(.{
@@ -278,6 +279,7 @@ pub fn build(b: *std.Build) !void {
             .optimize = optimize,
         });
         native_evdev_mod.addImport("input", native_input_mod);
+        native_evdev_mod.addImport("lv", native_lv_mod);
 
         const native_probe_mod = b.createModule(.{
             .root_source_file = b.path("src/native/probe.zig"),

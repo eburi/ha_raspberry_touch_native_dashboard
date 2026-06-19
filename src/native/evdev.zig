@@ -6,6 +6,7 @@
 ///! the input driver's read callback.
 const std = @import("std");
 const input = @import("input");
+const lv = @import("lv");
 
 const log = std.log.scoped(.evdev);
 
@@ -69,14 +70,22 @@ pub const Evdev = struct {
     y_min: i32 = 0,
     y_max: i32 = 0,
 
-    // Display dimensions for coordinate scaling
-    display_w: u32 = 0,
-    display_h: u32 = 0,
+    // Physical panel dimensions for coordinate scaling
+    physical_w: u32 = 0,
+    physical_h: u32 = 0,
+    // Logical LVGL display dimensions after rotation
+    logical_w: u32 = 0,
+    logical_h: u32 = 0,
+    // LVGL display rotation constant (0/90/180/270)
+    rotation: u32 = 0,
 
-    pub fn init(path: []const u8, display_w: u32, display_h: u32) !Evdev {
+    pub fn init(path: []const u8, physical_w: u32, physical_h: u32, logical_w: u32, logical_h: u32, rotation: u32) !Evdev {
         var self = Evdev{};
-        self.display_w = display_w;
-        self.display_h = display_h;
+        self.physical_w = physical_w;
+        self.physical_h = physical_h;
+        self.logical_w = logical_w;
+        self.logical_h = logical_h;
+        self.rotation = rotation;
 
         // Open the input device
         const fd = std.posix.open(
@@ -170,10 +179,10 @@ pub const Evdev = struct {
 
         // Fallback: assume 1:1 pixel mapping
         if (self.x_max == 0) {
-            self.x_max = @intCast(self.display_w);
+            self.x_max = @intCast(self.physical_w);
         }
         if (self.y_max == 0) {
-            self.y_max = @intCast(self.display_h);
+            self.y_max = @intCast(self.physical_h);
         }
     }
 
@@ -181,9 +190,44 @@ pub const Evdev = struct {
     fn scaleCoord(raw: i32, min: i32, max: i32, display_size: u32) i32 {
         if (max <= min) return raw;
         const clamped = std.math.clamp(raw, min, max);
-        const normalized: i64 = @as(i64, clamped - min) * @as(i64, display_size);
+        const normalized: i64 = @as(i64, clamped - min) * @as(i64, display_size - 1);
         const range: i64 = @as(i64, max - min);
         return @intCast(@divTrunc(normalized, range));
+    }
+
+    fn rotateToLogical(self: *Evdev, px: i32, py: i32) struct { x: i32, y: i32 } {
+        const w: i32 = @intCast(self.logical_w);
+        const h: i32 = @intCast(self.logical_h);
+
+        var out_x = px;
+        var out_y = py;
+
+        switch (self.rotation) {
+            // Inverse transform from physical touch coordinates -> logical UI coordinates.
+            // The rotation constant matches the LVGL display rotation configured in fbdev.
+            lv.LV_DISPLAY_ROTATION_90 => {
+                out_x = py;
+                out_y = h - 1 - px;
+            },
+            lv.LV_DISPLAY_ROTATION_180 => {
+                out_x = w - 1 - px;
+                out_y = h - 1 - py;
+            },
+            lv.LV_DISPLAY_ROTATION_270 => {
+                out_x = w - 1 - py;
+                out_y = px;
+            },
+            else => {
+                // LV_DISPLAY_ROTATION_0
+                out_x = px;
+                out_y = py;
+            },
+        }
+
+        return .{
+            .x = std.math.clamp(out_x, 0, w - 1),
+            .y = std.math.clamp(out_y, 0, h - 1),
+        };
     }
 
     /// Background thread: read input events and update pointer state.
@@ -249,9 +293,10 @@ pub const Evdev = struct {
             },
             EV_SYN => {
                 // Sync event — push accumulated state to the input module
-                const px = scaleCoord(self.abs_x, self.x_min, self.x_max, self.display_w);
-                const py = scaleCoord(self.abs_y, self.y_min, self.y_max, self.display_h);
-                input.setInput(px, py, self.pressed);
+                const px = scaleCoord(self.abs_x, self.x_min, self.x_max, self.physical_w);
+                const py = scaleCoord(self.abs_y, self.y_min, self.y_max, self.physical_h);
+                const logical = self.rotateToLogical(px, py);
+                input.setInput(logical.x, logical.y, self.pressed);
             },
             else => {},
         }

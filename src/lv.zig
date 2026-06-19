@@ -25,10 +25,15 @@ pub const lv_display_set_flush_cb = c.lv_display_set_flush_cb;
 pub const lv_display_set_buffers = c.lv_display_set_buffers;
 pub const lv_display_set_render_mode = c.lv_display_set_render_mode;
 pub const lv_display_set_color_format = c.lv_display_set_color_format;
+pub const lv_display_set_rotation = c.lv_display_set_rotation;
 pub const lv_display_flush_ready = c.lv_display_flush_ready;
 pub const lv_display_set_user_data = c.lv_display_set_user_data;
 pub const lv_display_get_user_data = c.lv_display_get_user_data;
 pub const LV_DISPLAY_RENDER_MODE_FULL = c.LV_DISPLAY_RENDER_MODE_FULL;
+pub const LV_DISPLAY_ROTATION_0 = c.LV_DISPLAY_ROTATION_0;
+pub const LV_DISPLAY_ROTATION_90 = c.LV_DISPLAY_ROTATION_90;
+pub const LV_DISPLAY_ROTATION_180 = c.LV_DISPLAY_ROTATION_180;
+pub const LV_DISPLAY_ROTATION_270 = c.LV_DISPLAY_ROTATION_270;
 
 // --- Input device ---
 pub const lv_indev_create = c.lv_indev_create;
