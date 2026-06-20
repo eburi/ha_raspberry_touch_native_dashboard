@@ -137,6 +137,7 @@ pub fn main() !void {
         .ha_url = config.ha_url,
         .token = config.supervisor_token,
     });
+    ha_client.setStateUpdateCallback(native_display.enqueueStateUpdate);
 
     // Start the HA client background connection (connects to HA WebSocket API)
     ha_client.start() catch |err| {

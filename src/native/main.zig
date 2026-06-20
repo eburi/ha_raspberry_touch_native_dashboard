@@ -22,6 +22,24 @@ const log = std.log.scoped(.native);
 /// Default display dimensions for RPi Touch Display 2
 const DEFAULT_WIDTH: u32 = 1280;
 const DEFAULT_HEIGHT: u32 = 720;
+const MAX_ENTITY_ID_LEN: usize = 128;
+const MAX_STATE_LEN: usize = 192;
+const MAX_PENDING_UPDATES: usize = 512;
+
+const SENSOR_COUNT: usize = 15;
+const TANK_COUNT: usize = 4;
+
+const EntityBuf = struct {
+    buf: [MAX_ENTITY_ID_LEN]u8 = undefined,
+    len: usize = 0,
+};
+
+const PendingUpdate = struct {
+    entity: [MAX_ENTITY_ID_LEN]u8 = undefined,
+    entity_len: u16 = 0,
+    state: [MAX_STATE_LEN]u8 = undefined,
+    state_len: u16 = 0,
+};
 
 /// Native display state
 var fbdev: Fbdev = .{};
@@ -31,6 +49,13 @@ var should_stop: std.atomic.Value(bool) = std.atomic.Value(bool).init(false);
 var is_running: bool = false;
 var configured_rotation_degrees: u16 = 270;
 
+var pending_updates: [MAX_PENDING_UPDATES]PendingUpdate = undefined;
+var pending_head: usize = 0;
+var pending_tail: usize = 0;
+var pending_count: usize = 0;
+var pending_mutex: std.Thread.Mutex = .{};
+var queue_full_warned: bool = false;
+
 /// Callback for HA service calls — will be set by the server before start()
 var ha_call_service_fn: ?*const fn (domain: []const u8, service: []const u8, entity_id: []const u8, extra_json: ?[]const u8) void = null;
 
@@ -39,6 +64,10 @@ var shutdown_fn: ?*const fn () void = null;
 
 /// Entity config JSON (kept for the LVGL thread to parse during init)
 var entity_config_json: []const u8 = "{}";
+
+var sensor_entities: [SENSOR_COUNT]EntityBuf = initDefaultSensorEntities();
+var tank_entities: [TANK_COUNT]EntityBuf = initDefaultTankEntities();
+var sail_entities: [dashboard.ENTITY_COUNT]EntityBuf = initDefaultSailEntities();
 
 /// Set the function used to call HA services.
 /// Must be called before start() so platform callbacks can reach HA.
@@ -56,6 +85,34 @@ pub fn setShutdownFn(func: *const fn () void) void {
 /// The JSON is parsed during LVGL init to configure sail entity IDs.
 pub fn setEntityConfig(json: []const u8) void {
     entity_config_json = json;
+}
+
+/// Enqueue a Home Assistant state update for application on the LVGL thread.
+/// This can be called from non-LVGL threads (e.g., HA client thread).
+pub fn enqueueStateUpdate(entity_id: []const u8, state: []const u8) void {
+    if (entity_id.len == 0 or state.len == 0) return;
+    if (entity_id.len > MAX_ENTITY_ID_LEN or state.len > MAX_STATE_LEN) return;
+
+    pending_mutex.lock();
+    defer pending_mutex.unlock();
+
+    if (pending_count >= MAX_PENDING_UPDATES) {
+        if (!queue_full_warned) {
+            log.warn("State update queue full ({d}) — dropping updates", .{MAX_PENDING_UPDATES});
+            queue_full_warned = true;
+        }
+        return;
+    }
+
+    var item = &pending_updates[pending_tail];
+    @memcpy(item.entity[0..entity_id.len], entity_id);
+    @memcpy(item.state[0..state.len], state);
+    item.entity_len = @intCast(entity_id.len);
+    item.state_len = @intCast(state.len);
+
+    pending_tail = (pending_tail + 1) % MAX_PENDING_UPDATES;
+    pending_count += 1;
+    queue_full_warned = false;
 }
 
 /// Set display rotation in degrees (valid values: 0, 90, 180, 270).
@@ -79,6 +136,8 @@ fn rotationFromDegrees(deg: u16) u32 {
 /// Probe for hardware and start the native display if found.
 /// Returns true if native display was started, false if no hardware.
 pub fn start() !bool {
+    resetPendingQueue();
+
     const hw = probe_mod.probe();
 
     if (!hw.has_display) {
@@ -145,6 +204,7 @@ pub fn stop() void {
     evdev.deinit();
     fbdev.deinit();
     is_running = false;
+    resetPendingQueue();
 
     log.info("Native display stopped", .{});
 }
@@ -190,6 +250,7 @@ fn lvglLoop(width: u32, height: u32) void {
 
     // Main render loop — call lv_timer_handler at ~30fps
     while (!should_stop.load(.acquire)) {
+        applyPendingStateUpdates();
         _ = lv.lv_timer_handler();
         std.time.sleep(33 * std.time.ns_per_ms); // ~30fps
     }
@@ -288,14 +349,31 @@ fn applyEntityConfig() void {
         else => return,
     };
 
-    // Slot mapping: 0=sail_main, 1=sail_jib, 2=sail_code0
-    const keys = [_][]const u8{ "sail_main", "sail_jib", "sail_code0" };
-    for (keys, 0..) |key, slot| {
+    applyDefaultEntityMappings();
+
+    const sensor_keys = [_][]const u8{
+        "latitude",
+        "longitude",
+        "log",
+        "heading",
+        "stw",
+        "sog",
+        "cog",
+        "aws",
+        "awa",
+        "tws",
+        "twd",
+        "barometric_pressure",
+        "distance_24h",
+        "speed_24h",
+        "datetime",
+    };
+    for (sensor_keys, 0..) |key, idx| {
         if (obj.get(key)) |val| {
             switch (val) {
                 .string => |s| {
                     if (s.len > 0) {
-                        dashboard.setEntityId(@intCast(slot), s.ptr, @intCast(s.len));
+                        setEntityBuf(&sensor_entities[idx], s);
                         log.info("Entity {s} = {s}", .{ key, s });
                     }
                 },
@@ -304,9 +382,175 @@ fn applyEntityConfig() void {
         }
     }
 
-    // Tank entity IDs are passed through to JS via the server's
-    // entity_config broadcast. The native display does not need to
-    // store them separately — tank state updates arrive as HA state
-    // changes which are handled by the JS/WASM pipeline or by
-    // direct calls to dashboard.update_tank_level() from the server.
+    const tank_keys = [_][]const u8{
+        "tank_fuel",
+        "tank_water_port",
+        "tank_water_stbd",
+        "tank_water_stbd_aft",
+    };
+    for (tank_keys, 0..) |key, idx| {
+        if (obj.get(key)) |val| {
+            switch (val) {
+                .string => |s| {
+                    if (s.len > 0) {
+                        setEntityBuf(&tank_entities[idx], s);
+                        log.info("Entity {s} = {s}", .{ key, s });
+                    }
+                },
+                else => {},
+            }
+        }
+    }
+
+    const sail_keys = [_][]const u8{ "sail_main", "sail_jib", "sail_code0" };
+    for (sail_keys, 0..) |key, slot| {
+        if (obj.get(key)) |val| {
+            switch (val) {
+                .string => |s| {
+                    if (s.len > 0) {
+                        setEntityBuf(&sail_entities[slot], s);
+                        dashboard.setEntityId(@intCast(slot), s.ptr, @intCast(s.len));
+                        log.info("Entity {s} = {s}", .{ key, s });
+                    }
+                },
+                else => {},
+            }
+        }
+    }
+}
+
+fn applyDefaultEntityMappings() void {
+    sensor_entities = initDefaultSensorEntities();
+    tank_entities = initDefaultTankEntities();
+    sail_entities = initDefaultSailEntities();
+
+    for (0..dashboard.ENTITY_COUNT) |slot| {
+        const entity = sail_entities[slot].buf[0..sail_entities[slot].len];
+        dashboard.setEntityId(@intCast(slot), entity.ptr, @intCast(entity.len));
+    }
+}
+
+fn setEntityBuf(dst: *EntityBuf, src: []const u8) void {
+    if (src.len == 0 or src.len > MAX_ENTITY_ID_LEN) return;
+    @memcpy(dst.buf[0..src.len], src);
+    dst.len = src.len;
+}
+
+fn entityEquals(buf: EntityBuf, entity_id: []const u8) bool {
+    if (buf.len == 0) return false;
+    return std.mem.eql(u8, buf.buf[0..buf.len], entity_id);
+}
+
+fn applyPendingStateUpdates() void {
+    var local: [64]PendingUpdate = undefined;
+    var local_count: usize = 0;
+
+    pending_mutex.lock();
+    while (pending_count > 0 and local_count < local.len) {
+        local[local_count] = pending_updates[pending_head];
+        pending_head = (pending_head + 1) % MAX_PENDING_UPDATES;
+        pending_count -= 1;
+        local_count += 1;
+    }
+    pending_mutex.unlock();
+
+    for (0..local_count) |i| {
+        const item = local[i];
+        const entity_id = item.entity[0..item.entity_len];
+        const state = item.state[0..item.state_len];
+        applyNativeState(entity_id, state);
+    }
+}
+
+fn applyNativeState(entity_id: []const u8, state: []const u8) void {
+    for (sensor_entities, 0..) |buf, idx| {
+        if (entityEquals(buf, entity_id)) {
+            var tmp: [MAX_STATE_LEN + 1]u8 = undefined;
+            @memcpy(tmp[0..state.len], state);
+            tmp[state.len] = 0;
+            dashboard.update_sensor(@intCast(idx), tmp[0..state.len].ptr, @intCast(state.len));
+            return;
+        }
+    }
+
+    for (tank_entities, 0..) |buf, idx| {
+        if (entityEquals(buf, entity_id)) {
+            dashboard.update_tank_level(@intCast(idx), state.ptr, @intCast(state.len));
+            return;
+        }
+    }
+
+    if (entityEquals(sail_entities[dashboard.ENTITY_SAIL_MAIN], entity_id)) {
+        dashboard.update_sail_main(state.ptr, @intCast(state.len));
+        return;
+    }
+    if (entityEquals(sail_entities[dashboard.ENTITY_SAIL_JIB], entity_id)) {
+        dashboard.update_sail_jib(state.ptr, @intCast(state.len));
+        return;
+    }
+    if (entityEquals(sail_entities[dashboard.ENTITY_CODE0], entity_id)) {
+        dashboard.update_code0(state.ptr, @intCast(state.len));
+        return;
+    }
+}
+
+fn initDefaultSensorEntities() [SENSOR_COUNT]EntityBuf {
+    var ids: [SENSOR_COUNT]EntityBuf = .{EntityBuf{}} ** SENSOR_COUNT;
+    const defaults = [SENSOR_COUNT][]const u8{
+        "sensor.primrose_latitude",
+        "sensor.primrose_longitude",
+        "sensor.primrose_log",
+        "sensor.primrose_heading_true",
+        "sensor.primrose_stw",
+        "sensor.primrose_sog",
+        "sensor.primrose_cog",
+        "sensor.primrose_aws",
+        "sensor.primrose_awa",
+        "sensor.tws_mean_15min",
+        "sensor.twd_mean_15min",
+        "sensor.barometric_pressure",
+        "sensor.primrose_log_change_24h",
+        "sensor.average_speed_over_24h",
+        "sensor.date_time_iso",
+    };
+    for (0..SENSOR_COUNT) |i| {
+        setEntityBuf(&ids[i], defaults[i]);
+    }
+    return ids;
+}
+
+fn initDefaultTankEntities() [TANK_COUNT]EntityBuf {
+    var ids: [TANK_COUNT]EntityBuf = .{EntityBuf{}} ** TANK_COUNT;
+    const defaults = [TANK_COUNT][]const u8{
+        "sensor.victron_mqtt_tank_23_tank_level",
+        "sensor.victron_mqtt_tank_21_tank_level",
+        "sensor.victron_mqtt_tank_22_tank_level",
+        "sensor.safiery_starlink_tank_sensor_id_26_level",
+    };
+    for (0..TANK_COUNT) |i| {
+        setEntityBuf(&ids[i], defaults[i]);
+    }
+    return ids;
+}
+
+fn initDefaultSailEntities() [dashboard.ENTITY_COUNT]EntityBuf {
+    var ids: [dashboard.ENTITY_COUNT]EntityBuf = .{EntityBuf{}} ** dashboard.ENTITY_COUNT;
+    const defaults = [dashboard.ENTITY_COUNT][]const u8{
+        "input_select.sail_configuration_main",
+        "input_select.sail_configuration_jib",
+        "input_boolean.sail_configuration_code_0_set",
+    };
+    for (0..dashboard.ENTITY_COUNT) |i| {
+        setEntityBuf(&ids[i], defaults[i]);
+    }
+    return ids;
+}
+
+fn resetPendingQueue() void {
+    pending_mutex.lock();
+    defer pending_mutex.unlock();
+    pending_head = 0;
+    pending_tail = 0;
+    pending_count = 0;
+    queue_full_warned = false;
 }

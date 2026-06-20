@@ -30,6 +30,10 @@ pub const HaConfig = struct {
 var config: HaConfig = .{};
 var allocator: std.mem.Allocator = undefined;
 
+/// Optional callback for native display state updates.
+/// Called for each entity state received from HA.
+var state_update_cb: ?*const fn (entity_id: []const u8, state: []const u8) void = null;
+
 /// Cached entity states: entity_id -> state string
 var state_cache: std.StringHashMap([]const u8) = undefined;
 var state_cache_mutex: std.Thread.Mutex = .{};
@@ -57,6 +61,10 @@ pub fn init(alloc: std.mem.Allocator, ha_config: HaConfig) void {
     allocator = alloc;
     config = ha_config;
     state_cache = std.StringHashMap([]const u8).init(alloc);
+}
+
+pub fn setStateUpdateCallback(cb: *const fn (entity_id: []const u8, state: []const u8) void) void {
+    state_update_cb = cb;
 }
 
 /// Start the background thread that maintains the HA WebSocket connection.
@@ -535,6 +543,10 @@ fn handleStatesResult(states: std.json.Array) void {
         // Update cache
         cacheState(entity_id, state);
 
+        if (state_update_cb) |cb| {
+            cb(entity_id, state);
+        }
+
         // Add to bulk message — serialize the full state object
         if (!first) states_json.append(',') catch continue;
         first = false;
@@ -623,6 +635,10 @@ fn handleStateChangedEvent(event: std.json.ObjectMap) void {
 
     // Update cache
     cacheState(entity_id, state);
+
+    if (state_update_cb) |cb| {
+        cb(entity_id, state);
+    }
 
     // Serialize the new_state object to JSON for the browser
     var json_buf = std.ArrayList(u8).init(allocator);
