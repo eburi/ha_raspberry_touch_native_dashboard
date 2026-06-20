@@ -22,6 +22,7 @@ OPTIONS_FILE="/data/options.json"
 if [ -f "$OPTIONS_FILE" ]; then
     PORT="$(jq -r '.port // 8765' "$OPTIONS_FILE")"
     LOG_LEVEL="$(jq -r '.log_level // "info"' "$OPTIONS_FILE")"
+    DISPLAY_ROTATION="$(jq -r '.display_rotation // 270' "$OPTIONS_FILE")"
     SIGNALK_URL="$(jq -r '.signalk_url // ""' "$OPTIONS_FILE")"
 
     # Build entity config JSON from options (only include non-empty values)
@@ -53,12 +54,14 @@ else
     log_warning "No options file found, using defaults"
     PORT="8765"
     LOG_LEVEL="info"
+    DISPLAY_ROTATION="270"
     SIGNALK_URL=""
     ENTITY_CONFIG="{}"
 fi
 
 log_info "Port: ${PORT}"
 log_info "Log level: ${LOG_LEVEL}"
+log_info "Display rotation: ${DISPLAY_ROTATION}"
 if [ -n "${SIGNALK_URL}" ]; then
     log_info "SignalK URL override: ${SIGNALK_URL}"
 fi
@@ -67,6 +70,7 @@ log_info "Entity config: ${ENTITY_CONFIG}"
 export PORT
 export WEB_ROOT="/app/web"
 export LOG_LEVEL
+export DISPLAY_ROTATION
 export ENTITY_CONFIG
 if [ -n "${SIGNALK_URL}" ]; then
     export SIGNALK_URL

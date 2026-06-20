@@ -100,6 +100,20 @@ pub const Fbdev = struct {
     /// LVGL output rotation (applies before flush callback)
     rotation: u32 = lv.LV_DISPLAY_ROTATION_0,
 
+    fn logicalWidth(self: *const Fbdev) u32 {
+        return switch (self.rotation) {
+            lv.LV_DISPLAY_ROTATION_90, lv.LV_DISPLAY_ROTATION_270 => self.height,
+            else => self.width,
+        };
+    }
+
+    fn logicalHeight(self: *const Fbdev) u32 {
+        return switch (self.rotation) {
+            lv.LV_DISPLAY_ROTATION_90, lv.LV_DISPLAY_ROTATION_270 => self.width,
+            else => self.height,
+        };
+    }
+
     /// Open the framebuffer device, query screen info, and mmap.
     pub fn init(path: []const u8) !Fbdev {
         var self = Fbdev{};
@@ -173,14 +187,15 @@ pub const Fbdev = struct {
     /// Set up LVGL display with this framebuffer as the rendering target.
     pub fn initDisplay(self: *Fbdev) void {
         const buf_size = self.width * self.height * 4; // XRGB8888
+        const logical_w = self.logicalWidth();
+        const logical_h = self.logicalHeight();
 
         // Allocate LVGL draw buffer
         self.draw_buf = @ptrCast(lv.lv_malloc(buf_size));
 
         // Create the LVGL display
-        self.display = lv.lv_display_create(@intCast(self.width), @intCast(self.height));
+        self.display = lv.lv_display_create(@intCast(logical_w), @intCast(logical_h));
         if (self.display) |disp| {
-            lv.lv_display_set_rotation(disp, self.rotation);
             // Store self pointer so the flush callback can access our mmap'd memory
             lv.lv_display_set_user_data(disp, self);
             lv.lv_display_set_flush_cb(disp, flushCb);
@@ -221,22 +236,67 @@ pub const Fbdev = struct {
         const x2: u32 = @intCast(a.x2);
         const y2: u32 = @intCast(a.y2);
         const w = x2 - x1 + 1;
+        const h = y2 - y1 + 1;
 
-        const src_stride = self.width * 4; // LVGL full-screen buffer stride
+        const logical_w = self.logicalWidth();
+        const logical_h = self.logicalHeight();
+        const src_stride = logical_w * 4; // LVGL full-screen buffer stride
         const dst_stride = self.line_length; // Framebuffer line_length (may differ)
 
-        var row: u32 = 0;
-        const h = y2 - y1 + 1;
-        while (row < h) : (row += 1) {
-            const src_offset = row * src_stride + x1 * 4;
-            const dst_offset = (y1 + row) * dst_stride + x1 * 4;
-            const copy_len = w * 4;
+        if (self.rotation == lv.LV_DISPLAY_ROTATION_0) {
+            var row: u32 = 0;
+            while (row < h) : (row += 1) {
+                const src_offset = row * src_stride + x1 * 4;
+                const dst_offset = (y1 + row) * dst_stride + x1 * 4;
+                const copy_len = w * 4;
 
-            if (dst_offset + copy_len <= fb.len) {
-                @memcpy(
-                    fb[dst_offset..][0..copy_len],
-                    src[src_offset..][0..copy_len],
-                );
+                if (dst_offset + copy_len <= fb.len) {
+                    @memcpy(
+                        fb[dst_offset..][0..copy_len],
+                        src[src_offset..][0..copy_len],
+                    );
+                }
+            }
+        } else {
+            var row: u32 = 0;
+            while (row < h) : (row += 1) {
+                const ly = y1 + row;
+                const src_row_start = row * src_stride + x1 * 4;
+
+                var col: u32 = 0;
+                while (col < w) : (col += 1) {
+                    const lx = x1 + col;
+                    const src_idx = src_row_start + col * 4;
+
+                    var px: u32 = lx;
+                    var py: u32 = ly;
+
+                    switch (self.rotation) {
+                        lv.LV_DISPLAY_ROTATION_90 => {
+                            px = logical_h - 1 - ly;
+                            py = lx;
+                        },
+                        lv.LV_DISPLAY_ROTATION_180 => {
+                            px = logical_w - 1 - lx;
+                            py = logical_h - 1 - ly;
+                        },
+                        lv.LV_DISPLAY_ROTATION_270 => {
+                            px = ly;
+                            py = logical_w - 1 - lx;
+                        },
+                        else => {},
+                    }
+
+                    if (px < self.width and py < self.height) {
+                        const dst_idx = py * dst_stride + px * 4;
+                        if (dst_idx + 4 <= fb.len) {
+                            fb[dst_idx + 0] = src[src_idx + 0];
+                            fb[dst_idx + 1] = src[src_idx + 1];
+                            fb[dst_idx + 2] = src[src_idx + 2];
+                            fb[dst_idx + 3] = src[src_idx + 3];
+                        }
+                    }
+                }
             }
         }
 

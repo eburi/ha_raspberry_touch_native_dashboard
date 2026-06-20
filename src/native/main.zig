@@ -29,6 +29,7 @@ var evdev: Evdev = .{};
 var lvgl_thread: ?std.Thread = null;
 var should_stop: std.atomic.Value(bool) = std.atomic.Value(bool).init(false);
 var is_running: bool = false;
+var configured_rotation_degrees: u16 = 270;
 
 /// Callback for HA service calls — will be set by the server before start()
 var ha_call_service_fn: ?*const fn (domain: []const u8, service: []const u8, entity_id: []const u8, extra_json: ?[]const u8) void = null;
@@ -57,6 +58,24 @@ pub fn setEntityConfig(json: []const u8) void {
     entity_config_json = json;
 }
 
+/// Set display rotation in degrees (valid values: 0, 90, 180, 270).
+/// Invalid values fall back to 270.
+pub fn setDisplayRotationDegrees(deg: u16) void {
+    configured_rotation_degrees = switch (deg) {
+        0, 90, 180, 270 => deg,
+        else => 270,
+    };
+}
+
+fn rotationFromDegrees(deg: u16) u32 {
+    return switch (deg) {
+        90 => lv.LV_DISPLAY_ROTATION_90,
+        180 => lv.LV_DISPLAY_ROTATION_180,
+        270 => lv.LV_DISPLAY_ROTATION_270,
+        else => lv.LV_DISPLAY_ROTATION_0,
+    };
+}
+
 /// Probe for hardware and start the native display if found.
 /// Returns true if native display was started, false if no hardware.
 pub fn start() !bool {
@@ -76,24 +95,22 @@ pub fn start() !bool {
     const physical_width = if (fbdev.width > 0) fbdev.width else DEFAULT_WIDTH;
     const physical_height = if (fbdev.height > 0) fbdev.height else DEFAULT_HEIGHT;
 
+    fbdev.rotation = rotationFromDegrees(configured_rotation_degrees);
+
     var ui_width = physical_width;
     var ui_height = physical_height;
-
-    // The RPi Touch Display 2 reports a portrait framebuffer (720x1280).
-    // Run the dashboard in landscape by rotating output 90 degrees CCW.
-    if (physical_height > physical_width) {
-        fbdev.rotation = lv.LV_DISPLAY_ROTATION_270;
+    if (configured_rotation_degrees == 90 or configured_rotation_degrees == 270) {
         ui_width = physical_height;
         ui_height = physical_width;
-        log.info("Portrait framebuffer detected ({d}x{d}); using landscape UI ({d}x{d}) with 90° CCW rotation", .{
-            physical_width,
-            physical_height,
-            ui_width,
-            ui_height,
-        });
-    } else {
-        fbdev.rotation = lv.LV_DISPLAY_ROTATION_0;
     }
+
+    log.info("Display rotation: {d} degrees, physical={d}x{d}, ui={d}x{d}", .{
+        configured_rotation_degrees,
+        physical_width,
+        physical_height,
+        ui_width,
+        ui_height,
+    });
 
     // Initialize touch input if available
     if (hw.has_touch) {

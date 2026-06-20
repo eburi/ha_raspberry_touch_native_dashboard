@@ -76,6 +76,7 @@ pub const Config = struct {
     /// Passed through to the browser client as-is. The server does not interpret
     /// individual entity keys — only the JS client needs them.
     entity_config_json: []const u8 = "{}",
+    display_rotation: u16 = 270,
 };
 
 var config: Config = .{};
@@ -123,6 +124,7 @@ pub fn main() !void {
         std.log.info("SignalK URL override configured: {s}", .{url});
     }
     std.log.info("Entity config: {s}", .{config.entity_config_json});
+    std.log.info("Display rotation: {d}", .{config.display_rotation});
 
     // Initialize modules
     websocket.init(allocator);
@@ -151,6 +153,7 @@ pub fn main() !void {
     native_display.setHaCallService(&haCallServiceBridge);
     native_display.setShutdownFn(&shutdown.initiate);
     native_display.setEntityConfig(config.entity_config_json);
+    native_display.setDisplayRotationDegrees(config.display_rotation);
     const has_native = native_display.start() catch |err| blk: {
         std.log.err("Failed to start native display: {}", .{err});
         break :blk false;
@@ -347,6 +350,16 @@ fn readConfig() Config {
     if (std.process.getEnvVarOwned(std.heap.page_allocator, "LOG_LEVEL")) |lvl| {
         cfg.log_level = parseLogLevel(lvl);
         std.heap.page_allocator.free(lvl);
+    } else |_| {}
+
+    // Display rotation (degrees): 0, 90, 180, 270
+    if (std.process.getEnvVarOwned(std.heap.page_allocator, "DISPLAY_ROTATION")) |deg_str| {
+        const deg = std.fmt.parseInt(u16, deg_str, 10) catch 270;
+        cfg.display_rotation = switch (deg) {
+            0, 90, 180, 270 => deg,
+            else => 270,
+        };
+        std.heap.page_allocator.free(deg_str);
     } else |_| {}
 
     return cfg;
