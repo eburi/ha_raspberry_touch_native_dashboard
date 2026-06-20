@@ -34,6 +34,9 @@ var allocator: std.mem.Allocator = undefined;
 /// Called for each entity state received from HA.
 var state_update_cb: ?*const fn (entity_id: []const u8, state: []const u8) void = null;
 
+/// Cached display precision from HA entity registry: entity_id -> dp.
+var display_precision_cache: std.StringHashMap(i32) = undefined;
+
 /// Cached entity states: entity_id -> state string
 var state_cache: std.StringHashMap([]const u8) = undefined;
 var state_cache_mutex: std.Thread.Mutex = .{};
@@ -61,6 +64,7 @@ pub fn init(alloc: std.mem.Allocator, ha_config: HaConfig) void {
     allocator = alloc;
     config = ha_config;
     state_cache = std.StringHashMap([]const u8).init(alloc);
+    display_precision_cache = std.StringHashMap(i32).init(alloc);
 }
 
 pub fn setStateUpdateCallback(cb: *const fn (entity_id: []const u8, state: []const u8) void) void {
@@ -121,6 +125,15 @@ pub fn deinit() void {
             allocator.free(entry.value_ptr.*);
         }
         state_cache.deinit();
+    }
+
+    // Free all entries in the display precision cache
+    {
+        var it = display_precision_cache.iterator();
+        while (it.next()) |entry| {
+            allocator.free(entry.key_ptr.*);
+        }
+        display_precision_cache.deinit();
     }
 }
 
@@ -544,7 +557,14 @@ fn handleStatesResult(states: std.json.Array) void {
         cacheState(entity_id, state);
 
         if (state_update_cb) |cb| {
-            cb(entity_id, state);
+            const attributes = if (item.object.get("attributes")) |attrs| blk: {
+                if (attrs == .object) break :blk attrs.object;
+                break :blk null;
+            } else null;
+
+            var display_buf: [256]u8 = undefined;
+            const display_state = formatStateForDisplay(entity_id, state, attributes, &display_buf);
+            cb(entity_id, display_state);
         }
 
         // Add to bulk message — serialize the full state object
@@ -584,6 +604,8 @@ fn handleEntityRegistryResult(result: std.json.ObjectMap) void {
     var first = true;
     var count: usize = 0;
 
+    clearDisplayPrecisionCache();
+
     for (entities.items) |item| {
         if (item != .object) continue;
 
@@ -603,6 +625,9 @@ fn handleEntityRegistryResult(result: std.json.ObjectMap) void {
         first = false;
 
         std.fmt.format(json_buf.writer(), "\"{s}\":{d}", .{ entity_id, dp }) catch continue;
+        if (std.math.cast(i32, dp)) |dp_i32| {
+            setDisplayPrecision(entity_id, dp_i32);
+        }
         count += 1;
     }
 
@@ -637,7 +662,14 @@ fn handleStateChangedEvent(event: std.json.ObjectMap) void {
     cacheState(entity_id, state);
 
     if (state_update_cb) |cb| {
-        cb(entity_id, state);
+        const attributes = if (new_state.object.get("attributes")) |attrs| blk: {
+            if (attrs == .object) break :blk attrs.object;
+            break :blk null;
+        } else null;
+
+        var display_buf: [256]u8 = undefined;
+        const display_state = formatStateForDisplay(entity_id, state, attributes, &display_buf);
+        cb(entity_id, display_state);
     }
 
     // Serialize the new_state object to JSON for the browser
@@ -675,6 +707,112 @@ fn cacheState(entity_id: []const u8, state: []const u8) void {
             allocator.free(val);
         };
     }
+}
+
+fn clearDisplayPrecisionCache() void {
+    var it = display_precision_cache.iterator();
+    while (it.next()) |entry| {
+        allocator.free(entry.key_ptr.*);
+    }
+    display_precision_cache.clearRetainingCapacity();
+}
+
+fn setDisplayPrecision(entity_id: []const u8, precision: i32) void {
+    if (display_precision_cache.getEntry(entity_id)) |entry| {
+        entry.value_ptr.* = precision;
+        return;
+    }
+
+    const key = allocator.dupe(u8, entity_id) catch return;
+    display_precision_cache.put(key, precision) catch {
+        allocator.free(key);
+    };
+}
+
+fn getDisplayPrecision(entity_id: []const u8) ?i32 {
+    return display_precision_cache.get(entity_id);
+}
+
+fn jsonToInt(value: std.json.Value) ?i32 {
+    return switch (value) {
+        .integer => |v| std.math.cast(i32, v),
+        .float => |v| blk: {
+            if (!std.math.isFinite(v)) break :blk null;
+            const rounded = @round(v);
+            if (@abs(v - rounded) > 0.0000001) break :blk null;
+            break :blk std.math.cast(i32, @as(i64, @intFromFloat(rounded)));
+        },
+        else => null,
+    };
+}
+
+fn resolvePrecision(entity_id: []const u8, attributes: ?std.json.ObjectMap) ?u8 {
+    if (getDisplayPrecision(entity_id)) |dp| {
+        if (dp >= 0 and dp <= 12) return @intCast(dp);
+    }
+
+    const attrs = attributes orelse return null;
+
+    if (attrs.get("display_precision")) |value| {
+        if (jsonToInt(value)) |dp| {
+            if (dp >= 0 and dp <= 12) return @intCast(dp);
+        }
+    }
+
+    if (attrs.get("suggested_display_precision")) |value| {
+        if (jsonToInt(value)) |dp| {
+            if (dp >= 0 and dp <= 12) return @intCast(dp);
+        }
+    }
+
+    return null;
+}
+
+fn resolveUnit(attributes: ?std.json.ObjectMap) []const u8 {
+    const attrs = attributes orelse return "";
+    const value = attrs.get("unit_of_measurement") orelse return "";
+    if (value != .string) return "";
+    return std.mem.trim(u8, value.string, " \t\r\n");
+}
+
+fn formatStateForDisplay(entity_id: []const u8, state: []const u8, attributes: ?std.json.ObjectMap, out: []u8) []const u8 {
+    const state_trimmed = std.mem.trim(u8, state, " \t\r\n");
+    if (std.mem.eql(u8, state_trimmed, "unknown") or std.mem.eql(u8, state_trimmed, "unavailable")) {
+        if (state.len > out.len) return state;
+        @memcpy(out[0..state.len], state);
+        return out[0..state.len];
+    }
+
+    var num_buf: [96]u8 = undefined;
+    var base_value = state;
+
+    if (resolvePrecision(entity_id, attributes)) |precision| {
+        if (std.fmt.parseFloat(f64, state_trimmed)) |numeric| {
+            const formatted = std.fmt.formatFloat(&num_buf, numeric, .{
+                .mode = .decimal,
+                .precision = precision,
+            }) catch state_trimmed;
+            base_value = formatted;
+        } else |_| {}
+    }
+
+    const unit = resolveUnit(attributes);
+    const has_unit = unit.len > 0;
+    var already_has_unit = false;
+    if (has_unit and base_value.len > unit.len and base_value[base_value.len - unit.len - 1] == ' ') {
+        already_has_unit = std.mem.eql(u8, base_value[base_value.len - unit.len ..], unit);
+    }
+
+    const with_unit = has_unit and !already_has_unit;
+    const result_len = if (with_unit) base_value.len + 1 + unit.len else base_value.len;
+    if (result_len > out.len) return state;
+
+    @memcpy(out[0..base_value.len], base_value);
+    if (with_unit) {
+        out[base_value.len] = ' ';
+        @memcpy(out[base_value.len + 1 .. result_len], unit);
+    }
+    return out[0..result_len];
 }
 
 /// Cached bulk states JSON (for sending to newly connected clients).
