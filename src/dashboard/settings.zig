@@ -7,6 +7,8 @@ const theme = @import("theme.zig");
 // ============================================================
 var power_off_bar: ?*lv.lv_obj_t = null;
 var power_off_anim_running: bool = false;
+var power_off_confirm_dialog: ?*lv.lv_obj_t = null;
+var power_off_confirm_visible: bool = false;
 
 // lv_anim_t is opaque to Zig (C struct with bitfields/union), so we use a
 // raw byte buffer as backing storage. 256 bytes is generous enough for both
@@ -94,13 +96,8 @@ fn powerOffAnimCompletedCb(anim: ?*lv.lv_anim_t) callconv(.C) void {
     _ = anim;
     power_off_anim_running = false;
 
-    // Trigger the power_off platform callback
-    if (power_off_cb) |cb| {
-        cb();
-    }
-
-    // Show the shutdown screen
-    showShutdownScreen();
+    // Open confirmation dialog after successful long-press.
+    showPowerOffConfirmDialog();
 }
 
 /// PRESSED event — start the 3-second animation on the bar.
@@ -135,6 +132,142 @@ fn powerOffReleasedCb(e: ?*lv.lv_event_t) callconv(.C) void {
 
     // Reset bar to 0
     lv.lv_bar_set_value(bar, 0, lv.LV_ANIM_OFF);
+}
+
+fn showPowerOffConfirmDialog() void {
+    if (power_off_confirm_visible) return;
+
+    const root = lv.lv_screen_active() orelse return;
+    const overlay = lv.lv_obj_create(root);
+    if (overlay == null) return;
+
+    power_off_confirm_dialog = overlay;
+    power_off_confirm_visible = true;
+
+    lv.lv_obj_set_size(overlay, lv.LV_PCT(100), lv.LV_PCT(100));
+    lv.lv_obj_align(overlay, lv.LV_ALIGN_CENTER, 0, 0);
+    lv.lv_obj_set_style_bg_color(overlay, lv.lv_color_black(), lv.LV_PART_MAIN);
+    lv.lv_obj_set_style_bg_opa(overlay, lv.LV_OPA_50, lv.LV_PART_MAIN);
+    lv.lv_obj_set_style_border_width(overlay, 0, lv.LV_PART_MAIN);
+    lv.lv_obj_set_style_pad_all(overlay, 0, lv.LV_PART_MAIN);
+    lv.lv_obj_remove_flag(overlay, lv.LV_OBJ_FLAG_SCROLLABLE);
+
+    const panel = lv.lv_obj_create(overlay);
+    if (panel == null) {
+        closePowerOffConfirmDialog();
+        return;
+    }
+    lv.lv_obj_set_size(panel, 500, 260);
+    lv.lv_obj_align(panel, lv.LV_ALIGN_CENTER, 0, 0);
+    lv.lv_obj_set_style_bg_color(panel, lv.lv_color_hex(theme.COL_CARD_BG), lv.LV_PART_MAIN);
+    lv.lv_obj_set_style_bg_opa(panel, lv.LV_OPA_COVER, lv.LV_PART_MAIN);
+    lv.lv_obj_set_style_radius(panel, 12, lv.LV_PART_MAIN);
+    lv.lv_obj_set_style_border_width(panel, 2, lv.LV_PART_MAIN);
+    lv.lv_obj_set_style_border_color(panel, lv.lv_color_hex(theme.COL_ACCENT_1), lv.LV_PART_MAIN);
+    lv.lv_obj_set_style_pad_left(panel, 20, lv.LV_PART_MAIN);
+    lv.lv_obj_set_style_pad_right(panel, 20, lv.LV_PART_MAIN);
+    lv.lv_obj_set_style_pad_top(panel, 18, lv.LV_PART_MAIN);
+    lv.lv_obj_set_style_pad_bottom(panel, 18, lv.LV_PART_MAIN);
+    lv.lv_obj_set_style_pad_row(panel, 16, lv.LV_PART_MAIN);
+    lv.lv_obj_set_flex_flow(panel, lv.LV_FLEX_FLOW_COLUMN);
+    lv.lv_obj_set_flex_align(panel, lv.LV_FLEX_ALIGN_START, lv.LV_FLEX_ALIGN_CENTER, lv.LV_FLEX_ALIGN_CENTER);
+    lv.lv_obj_remove_flag(panel, lv.LV_OBJ_FLAG_SCROLLABLE);
+
+    const title = lv.lv_label_create(panel);
+    if (title) |lbl| {
+        lv.lv_label_set_text(lbl, "Confirm power off");
+        lv.lv_obj_set_style_text_color(lbl, lv.lv_color_hex(theme.COL_FG), lv.LV_PART_MAIN);
+        lv.lv_obj_set_style_text_font(lbl, lv.lv_font_montserrat_28, lv.LV_PART_MAIN);
+        lv.lv_obj_set_style_text_align(lbl, lv.LV_TEXT_ALIGN_CENTER, lv.LV_PART_MAIN);
+        lv.lv_obj_set_width(lbl, 460);
+    }
+
+    const body = lv.lv_label_create(panel);
+    if (body) |lbl| {
+        lv.lv_label_set_text(lbl, "Do you really want to shut down the host system?");
+        lv.lv_obj_set_style_text_color(lbl, lv.lv_color_hex(theme.COL_TEXT), lv.LV_PART_MAIN);
+        lv.lv_obj_set_style_text_font(lbl, lv.lv_font_montserrat_20, lv.LV_PART_MAIN);
+        lv.lv_obj_set_style_text_align(lbl, lv.LV_TEXT_ALIGN_CENTER, lv.LV_PART_MAIN);
+        lv.lv_obj_set_width(lbl, 460);
+    }
+
+    const row = lv.lv_obj_create(panel);
+    if (row == null) {
+        closePowerOffConfirmDialog();
+        return;
+    }
+    lv.lv_obj_set_size(row, lv.LV_PCT(100), lv.LV_SIZE_CONTENT);
+    lv.lv_obj_set_style_bg_opa(row, lv.LV_OPA_TRANSP, lv.LV_PART_MAIN);
+    lv.lv_obj_set_style_border_width(row, 0, lv.LV_PART_MAIN);
+    lv.lv_obj_set_style_pad_all(row, 0, lv.LV_PART_MAIN);
+    lv.lv_obj_set_style_pad_column(row, 14, lv.LV_PART_MAIN);
+    lv.lv_obj_set_flex_flow(row, lv.LV_FLEX_FLOW_ROW);
+    lv.lv_obj_set_flex_align(row, lv.LV_FLEX_ALIGN_CENTER, lv.LV_FLEX_ALIGN_CENTER, lv.LV_FLEX_ALIGN_CENTER);
+    lv.lv_obj_remove_flag(row, lv.LV_OBJ_FLAG_SCROLLABLE);
+
+    const cancel_btn = lv.lv_button_create(row);
+    if (cancel_btn) |btn| {
+        lv.lv_obj_set_size(btn, 180, 58);
+        lv.lv_obj_set_style_radius(btn, 10, lv.LV_PART_MAIN);
+        lv.lv_obj_set_style_bg_color(btn, lv.lv_color_hex(theme.COL_BG_DARK), lv.LV_PART_MAIN);
+        lv.lv_obj_set_style_bg_opa(btn, lv.LV_OPA_COVER, lv.LV_PART_MAIN);
+        lv.lv_obj_set_style_border_width(btn, 2, lv.LV_PART_MAIN);
+        lv.lv_obj_set_style_border_color(btn, lv.lv_color_hex(theme.COL_ACCENT_1), lv.LV_PART_MAIN);
+        const lbl = lv.lv_label_create(btn);
+        if (lbl) |l| {
+            lv.lv_label_set_text(l, "Cancel");
+            lv.lv_obj_set_style_text_color(l, lv.lv_color_hex(theme.COL_TEXT_DIM), lv.LV_PART_MAIN);
+            lv.lv_obj_set_style_text_font(l, lv.lv_font_montserrat_20, lv.LV_PART_MAIN);
+            lv.lv_obj_center(l);
+        }
+        _ = lv.lv_obj_add_event_cb(btn, powerOffConfirmCancelCb, lv.LV_EVENT_CLICKED, null);
+    }
+
+    const confirm_btn = lv.lv_button_create(row);
+    if (confirm_btn) |btn| {
+        lv.lv_obj_set_size(btn, 180, 58);
+        lv.lv_obj_set_style_radius(btn, 10, lv.LV_PART_MAIN);
+        lv.lv_obj_set_style_bg_color(btn, lv.lv_color_hex(theme.COL_ACCENT_2), lv.LV_PART_MAIN);
+        lv.lv_obj_set_style_bg_opa(btn, lv.LV_OPA_COVER, lv.LV_PART_MAIN);
+        lv.lv_obj_set_style_border_width(btn, 2, lv.LV_PART_MAIN);
+        lv.lv_obj_set_style_border_color(btn, lv.lv_color_hex(theme.COL_FG), lv.LV_PART_MAIN);
+        const lbl = lv.lv_label_create(btn);
+        if (lbl) |l| {
+            lv.lv_label_set_text(l, "Power off");
+            lv.lv_obj_set_style_text_color(l, lv.lv_color_hex(theme.COL_BG_DARK), lv.LV_PART_MAIN);
+            lv.lv_obj_set_style_text_font(l, lv.lv_font_montserrat_20, lv.LV_PART_MAIN);
+            lv.lv_obj_center(l);
+        }
+        _ = lv.lv_obj_add_event_cb(btn, powerOffConfirmAcceptCb, lv.LV_EVENT_CLICKED, null);
+    }
+}
+
+fn closePowerOffConfirmDialog() void {
+    if (power_off_confirm_dialog) |dlg| {
+        lv.lv_obj_delete(dlg);
+    }
+    power_off_confirm_dialog = null;
+    power_off_confirm_visible = false;
+
+    if (power_off_bar) |bar| {
+        lv.lv_bar_set_value(bar, 0, lv.LV_ANIM_OFF);
+    }
+}
+
+fn powerOffConfirmCancelCb(e: ?*lv.lv_event_t) callconv(.C) void {
+    _ = e;
+    closePowerOffConfirmDialog();
+}
+
+fn powerOffConfirmAcceptCb(e: ?*lv.lv_event_t) callconv(.C) void {
+    _ = e;
+    closePowerOffConfirmDialog();
+
+    if (power_off_cb) |cb| {
+        cb();
+    }
+
+    showShutdownScreen();
 }
 
 /// Show the shutdown screen — all black with centered text.

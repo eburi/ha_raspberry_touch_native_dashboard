@@ -22,3 +22,27 @@ test "evdev deinit is safe when unopened" {
     try std.testing.expectEqual(@as(?std.posix.fd_t, null), device.fd);
     try std.testing.expect(device.thread == null);
 }
+
+test "physical to logical mapping handles rotation 0" {
+    const p = evdev.Evdev.mapPhysicalToLogical(evdev.ROT_0, 1280, 720, 100, 200);
+    try std.testing.expectEqual(@as(i32, 100), p.x);
+    try std.testing.expectEqual(@as(i32, 200), p.y);
+}
+
+test "physical to logical mapping handles rotation 90" {
+    const p = evdev.Evdev.mapPhysicalToLogical(evdev.ROT_90, 720, 1280, 100, 200);
+    try std.testing.expectEqual(@as(i32, 200), p.x);
+    try std.testing.expectEqual(@as(i32, 1179), p.y);
+}
+
+test "physical to logical mapping handles rotation 180" {
+    const p = evdev.Evdev.mapPhysicalToLogical(evdev.ROT_180, 1280, 720, 100, 200);
+    try std.testing.expectEqual(@as(i32, 1179), p.x);
+    try std.testing.expectEqual(@as(i32, 519), p.y);
+}
+
+test "physical to logical mapping handles rotation 270" {
+    const p = evdev.Evdev.mapPhysicalToLogical(evdev.ROT_270, 720, 1280, 100, 200);
+    try std.testing.expectEqual(@as(i32, 519), p.x);
+    try std.testing.expectEqual(@as(i32, 100), p.y);
+}

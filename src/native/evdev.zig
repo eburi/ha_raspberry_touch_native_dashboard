@@ -23,6 +23,11 @@ const ABS_MT_TRACKING_ID: u16 = 0x39;
 
 const BTN_TOUCH: u16 = 0x14a;
 
+pub const ROT_0: u32 = lv.LV_DISPLAY_ROTATION_0;
+pub const ROT_90: u32 = lv.LV_DISPLAY_ROTATION_90;
+pub const ROT_180: u32 = lv.LV_DISPLAY_ROTATION_180;
+pub const ROT_270: u32 = lv.LV_DISPLAY_ROTATION_270;
+
 /// Linux input_event structure (matches kernel struct input_event)
 const InputEvent = extern struct {
     tv_sec: isize,
@@ -52,6 +57,11 @@ const InputAbsinfo = extern struct {
     fuzz: i32,
     flat: i32,
     resolution: i32,
+};
+
+const Point = struct {
+    x: i32,
+    y: i32,
 };
 
 pub const Evdev = struct {
@@ -195,14 +205,14 @@ pub const Evdev = struct {
         return @intCast(@divTrunc(normalized, range));
     }
 
-    fn rotateToLogical(self: *Evdev, px: i32, py: i32) struct { x: i32, y: i32 } {
-        const w: i32 = @intCast(self.logical_w);
-        const h: i32 = @intCast(self.logical_h);
+    pub fn mapPhysicalToLogical(rotation: u32, logical_w: u32, logical_h: u32, px: i32, py: i32) Point {
+        const w: i32 = @intCast(logical_w);
+        const h: i32 = @intCast(logical_h);
 
         var out_x = px;
         var out_y = py;
 
-        switch (self.rotation) {
+        switch (rotation) {
             // Inverse transform from physical touch coordinates -> logical UI coordinates.
             // The rotation constant matches the LVGL display rotation configured in fbdev.
             lv.LV_DISPLAY_ROTATION_90 => {
@@ -228,6 +238,10 @@ pub const Evdev = struct {
             .x = std.math.clamp(out_x, 0, w - 1),
             .y = std.math.clamp(out_y, 0, h - 1),
         };
+    }
+
+    fn rotateToLogical(self: *Evdev, px: i32, py: i32) Point {
+        return mapPhysicalToLogical(self.rotation, self.logical_w, self.logical_h, px, py);
     }
 
     /// Background thread: read input events and update pointer state.
