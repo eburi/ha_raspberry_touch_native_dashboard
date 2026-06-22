@@ -33,6 +33,7 @@ var allocator: std.mem.Allocator = undefined;
 /// Optional callback for native display state updates.
 /// Called for each entity state received from HA.
 var state_update_cb: ?*const fn (entity_id: []const u8, state: []const u8) void = null;
+var state_update_raw_cb: ?*const fn (entity_id: []const u8, state: []const u8) void = null;
 
 /// Cached display precision from HA entity registry: entity_id -> dp.
 var display_precision_cache: std.StringHashMap(i32) = undefined;
@@ -69,6 +70,10 @@ pub fn init(alloc: std.mem.Allocator, ha_config: HaConfig) void {
 
 pub fn setStateUpdateCallback(cb: *const fn (entity_id: []const u8, state: []const u8) void) void {
     state_update_cb = cb;
+}
+
+pub fn setStateUpdateRawCallback(cb: *const fn (entity_id: []const u8, state: []const u8) void) void {
+    state_update_raw_cb = cb;
 }
 
 /// Start the background thread that maintains the HA WebSocket connection.
@@ -567,6 +572,10 @@ fn handleStatesResult(states: std.json.Array) void {
             cb(entity_id, display_state);
         }
 
+        if (state_update_raw_cb) |cb_raw| {
+            cb_raw(entity_id, state);
+        }
+
         // Add to bulk message — serialize the full state object
         if (!first) states_json.append(',') catch continue;
         first = false;
@@ -670,6 +679,10 @@ fn handleStateChangedEvent(event: std.json.ObjectMap) void {
         var display_buf: [256]u8 = undefined;
         const display_state = formatStateForDisplay(entity_id, state, attributes, &display_buf);
         cb(entity_id, display_state);
+    }
+
+    if (state_update_raw_cb) |cb_raw| {
+        cb_raw(entity_id, state);
     }
 
     // Serialize the new_state object to JSON for the browser

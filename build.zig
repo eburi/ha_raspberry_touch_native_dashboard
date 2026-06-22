@@ -262,6 +262,21 @@ pub fn build(b: *std.Build) !void {
         native_dashboard_mod.addIncludePath(b.path("."));
         native_dashboard_mod.addIncludePath(b.path("src/generated_icons"));
 
+        // MQTT client module (no external deps)
+        const mqtt_client_mod = b.createModule(.{
+            .root_source_file = b.path("src/server/mqtt_client.zig"),
+            .target = native_target,
+            .optimize = optimize,
+        });
+
+        // HA light entity module (depends on mqtt_client)
+        const ha_light_mod = b.createModule(.{
+            .root_source_file = b.path("src/server/ha_light.zig"),
+            .target = native_target,
+            .optimize = optimize,
+        });
+        ha_light_mod.addImport("mqtt_client", mqtt_client_mod);
+
         // Native hardware modules
         const native_fbdev_mod = b.createModule(.{
             .root_source_file = b.path("src/native/fbdev.zig"),
@@ -303,8 +318,19 @@ pub fn build(b: *std.Build) !void {
         native_display_mod.addIncludePath(lvgl_dep.path("src"));
         native_display_mod.addIncludePath(b.path("."));
 
+        const native_backlight_mod = b.createModule(.{
+            .root_source_file = b.path("src/native/backlight.zig"),
+            .target = native_target,
+            .optimize = optimize,
+        });
+        native_display_mod.addImport("backlight", native_backlight_mod);
+
         // Register native_display module on the server so main.zig can import it
         server_exe.root_module.addImport("native_display", native_display_mod);
+
+        // Register MQTT modules on the server
+        server_exe.root_module.addImport("mqtt_client", mqtt_client_mod);
+        server_exe.root_module.addImport("ha_light", ha_light_mod);
 
         // Add LVGL C sources to the server build (for native rendering)
         server_exe.addIncludePath(lvgl_dep.path(""));

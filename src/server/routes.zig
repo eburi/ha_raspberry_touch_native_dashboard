@@ -11,6 +11,7 @@ const zap = @import("zap");
 
 const Config = @import("main.zig").Config;
 const ha_client = @import("ha_client.zig");
+const native_display = @import("native_display");
 
 var allocator: std.mem.Allocator = undefined;
 
@@ -27,6 +28,14 @@ pub fn handleApi(r: zap.Request, config: *const Config) !void {
 
     if (std.mem.eql(u8, path, "/api/config")) {
         return handleConfig(r, config);
+    }
+
+    if (std.mem.eql(u8, path, "/api/brightness")) {
+        return handleBrightnessGet(r);
+    }
+
+    if (std.mem.eql(u8, path, "/api/brightness/set")) {
+        return handleBrightnessSet(r);
     }
 
     if (std.mem.startsWith(u8, path, "/api/ha/")) {
@@ -55,6 +64,103 @@ fn handleConfig(r: zap.Request, config: *const Config) void {
     r.setStatus(.ok);
     r.setHeader("Content-Type", "application/json") catch {};
     r.sendBody(json) catch {};
+}
+
+fn handleBrightnessGet(r: zap.Request) void {
+    const state = native_display.getBrightnessState();
+
+    var buf: [128]u8 = undefined;
+    const json = std.fmt.bufPrint(
+        &buf,
+        "{{\"available\":{s},\"percent\":{d}}}",
+        .{ if (state.available) "true" else "false", state.percent },
+    ) catch {
+        r.setStatus(.internal_server_error);
+        r.sendBody("{\"error\":\"brightness response too large\"}") catch {};
+        return;
+    };
+
+    r.setStatus(.ok);
+    r.setHeader("Content-Type", "application/json") catch {};
+    r.sendBody(json) catch {};
+}
+
+fn handleBrightnessSet(r: zap.Request) void {
+    const method = r.method orelse "GET";
+    if (!std.mem.eql(u8, method, "POST")) {
+        r.setStatus(.method_not_allowed);
+        r.setHeader("Content-Type", "application/json") catch {};
+        r.sendBody("{\"error\":\"method not allowed\"}") catch {};
+        return;
+    }
+
+    const body = r.body orelse "{}";
+    const parsed = std.json.parseFromSlice(std.json.Value, allocator, body, .{}) catch {
+        r.setStatus(.bad_request);
+        r.setHeader("Content-Type", "application/json") catch {};
+        r.sendBody("{\"error\":\"invalid json\"}") catch {};
+        return;
+    };
+    defer parsed.deinit();
+
+    if (parsed.value != .object) {
+        r.setStatus(.bad_request);
+        r.setHeader("Content-Type", "application/json") catch {};
+        r.sendBody("{\"error\":\"invalid payload\"}") catch {};
+        return;
+    }
+
+    const percent_val = parsed.value.object.get("percent") orelse {
+        r.setStatus(.bad_request);
+        r.setHeader("Content-Type", "application/json") catch {};
+        r.sendBody("{\"error\":\"missing percent\"}") catch {};
+        return;
+    };
+
+    const percent = parsePercent(percent_val) orelse {
+        r.setStatus(.bad_request);
+        r.setHeader("Content-Type", "application/json") catch {};
+        r.sendBody("{\"error\":\"percent must be 0..100\"}") catch {};
+        return;
+    };
+
+    native_display.setBrightnessPercent(percent) catch |err| {
+        std.log.warn("API brightness set failed: {}", .{err});
+        r.setStatus(.service_unavailable);
+        r.setHeader("Content-Type", "application/json") catch {};
+        r.sendBody("{\"error\":\"brightness unavailable\"}") catch {};
+        return;
+    };
+
+    const state = native_display.getBrightnessState();
+    var buf: [128]u8 = undefined;
+    const json = std.fmt.bufPrint(
+        &buf,
+        "{{\"ok\":true,\"available\":{s},\"percent\":{d}}}",
+        .{ if (state.available) "true" else "false", state.percent },
+    ) catch {
+        r.setStatus(.internal_server_error);
+        r.sendBody("{\"error\":\"brightness response too large\"}") catch {};
+        return;
+    };
+
+    r.setStatus(.ok);
+    r.setHeader("Content-Type", "application/json") catch {};
+    r.sendBody(json) catch {};
+}
+
+fn parsePercent(v: std.json.Value) ?u8 {
+    const n: i32 = switch (v) {
+        .integer => |i| std.math.cast(i32, i) orelse return null,
+        .float => |f| blk: {
+            if (!std.math.isFinite(f)) return null;
+            break :blk @intFromFloat(@round(f));
+        },
+        else => return null,
+    };
+
+    if (n < 0 or n > 100) return null;
+    return @intCast(n);
 }
 
 fn handleHaProxy(r: zap.Request, path: []const u8, config: *const Config) void {

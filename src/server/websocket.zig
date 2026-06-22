@@ -8,8 +8,10 @@
 ///!   Client → Server: { "type": "subscribe", "entities": ["sensor.foo", ...] }
 ///!   Client → Server: { "type": "get_states" }
 ///!   Client → Server: { "type": "call_service", "domain": "...", "service": "...", "service_data": {...} }
+///!   Client → Server: { "type": "brightness_set", "percent": 0..100 }
 ///!   Server → Client: { "type": "state_changed", "entity_id": "...", "state": "..." }
 ///!   Server → Client: { "type": "states", "data": [{...}, ...] }
+///!   Server → Client: { "type": "brightness_state", "available": true|false, "percent": 0..100 }
 const std = @import("std");
 const zap = @import("zap");
 
@@ -39,6 +41,14 @@ const BROADCAST_CHANNEL = "ha_states";
 /// Entity config JSON string — sent to each connecting client.
 var entity_config_json: []const u8 = "{}";
 
+pub const BrightnessState = struct {
+    available: bool = false,
+    percent: u8 = 100,
+};
+
+var brightness_state_fn: ?*const fn () BrightnessState = null;
+var brightness_set_fn: ?*const fn (percent: u8) bool = null;
+
 /// Initialize the WebSocket module.
 pub fn init(alloc: std.mem.Allocator) void {
     allocator = alloc;
@@ -47,6 +57,14 @@ pub fn init(alloc: std.mem.Allocator) void {
 /// Set the entity config JSON to send to clients on connect.
 pub fn setEntityConfig(json: []const u8) void {
     entity_config_json = json;
+}
+
+pub fn setBrightnessHandlers(
+    get_state: ?*const fn () BrightnessState,
+    set_value: ?*const fn (percent: u8) bool,
+) void {
+    brightness_state_fn = get_state;
+    brightness_set_fn = set_value;
 }
 
 /// Called from the HTTP on_upgrade callback in main.zig when a WebSocket
@@ -133,6 +151,8 @@ fn onMessage(context: ?*ClientContext, handle: WsHandle, message: []const u8, is
     } else if (std.mem.eql(u8, type_str, "power_off")) {
         std.log.info("WS: power_off requested — initiating host shutdown", .{});
         shutdown.initiate();
+    } else if (std.mem.eql(u8, type_str, "brightness_set")) {
+        handleBrightnessSet(root.object);
     } else {
         std.log.warn("WS: unknown message type: {s}", .{type_str});
     }
@@ -182,6 +202,8 @@ fn handleGetStates(handle: WsHandle) void {
             std.log.err("WS: failed to send entity registry: {}", .{err});
         };
     }
+
+    sendBrightnessStateToClient(handle);
 }
 
 /// Handle "call_service" — forward to HA via the HA client.
@@ -236,6 +258,67 @@ fn handleAnchorAction(handle: WsHandle, obj: std.json.ObjectMap) void {
     ) catch return;
     defer allocator.free(ok_json);
     WsHandler.write(handle, ok_json, true) catch {};
+}
+
+fn handleBrightnessSet(obj: std.json.ObjectMap) void {
+    const percent_val = obj.get("percent") orelse return;
+    const percent = parsePercent(percent_val) orelse return;
+
+    if (brightness_set_fn) |set_fn| {
+        if (!set_fn(percent)) {
+            std.log.warn("WS: brightness_set rejected", .{});
+        }
+    }
+
+    broadcastBrightnessState(getBrightnessState());
+}
+
+fn parsePercent(v: std.json.Value) ?u8 {
+    const n: i32 = switch (v) {
+        .integer => |i| std.math.cast(i32, i) orelse return null,
+        .float => |f| blk: {
+            if (!std.math.isFinite(f)) return null;
+            break :blk @intFromFloat(@round(f));
+        },
+        else => return null,
+    };
+    if (n < 0 or n > 100) return null;
+    return @intCast(n);
+}
+
+fn getBrightnessState() BrightnessState {
+    if (brightness_state_fn) |get_fn| {
+        return get_fn();
+    }
+    return .{};
+}
+
+fn sendBrightnessStateToClient(handle: WsHandle) void {
+    const state = getBrightnessState();
+    const json = std.fmt.allocPrint(
+        allocator,
+        "{{\"type\":\"brightness_state\",\"available\":{s},\"percent\":{d}}}",
+        .{ if (state.available) "true" else "false", state.percent },
+    ) catch return;
+    defer allocator.free(json);
+
+    WsHandler.write(handle, json, true) catch |err| {
+        std.log.err("WS: failed to send brightness_state: {}", .{err});
+    };
+}
+
+pub fn broadcastBrightnessState(state: BrightnessState) void {
+    const json = std.fmt.allocPrint(
+        allocator,
+        "{{\"type\":\"brightness_state\",\"available\":{s},\"percent\":{d}}}",
+        .{ if (state.available) "true" else "false", state.percent },
+    ) catch return;
+    defer allocator.free(json);
+
+    WsHandler.publish(.{
+        .channel = BROADCAST_CHANNEL,
+        .message = json,
+    });
 }
 
 /// Broadcast a state_changed message to ALL connected WebSocket clients.

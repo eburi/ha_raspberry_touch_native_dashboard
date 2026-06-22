@@ -23,6 +23,8 @@ const websocket = @import("websocket.zig");
 const ha_client = @import("ha_client.zig");
 const signalk_client = @import("signalk_client.zig");
 const native_display = @import("native_display");
+const ha_light = @import("ha_light.zig");
+const mqtt_client = @import("mqtt_client");
 const shutdown = @import("shutdown.zig");
 
 var runtime_log_level: std.log.Level = .info;
@@ -77,6 +79,12 @@ pub const Config = struct {
     /// individual entity keys — only the JS client needs them.
     entity_config_json: []const u8 = "{}",
     display_rotation: u16 = 270,
+    backlight_sysfs: ?[]const u8 = null,
+    backlight_max_raw: i32 = 0,
+    mqtt_host: ?[]const u8 = null,
+    mqtt_port: u16 = 1883,
+    mqtt_username: ?[]const u8 = null,
+    mqtt_password: ?[]const u8 = null,
 };
 
 var config: Config = .{};
@@ -125,11 +133,20 @@ pub fn main() !void {
     }
     std.log.info("Entity config: {s}", .{config.entity_config_json});
     std.log.info("Display rotation: {d}", .{config.display_rotation});
+    if (config.backlight_sysfs) |path| {
+        std.log.info("Backlight sysfs path override: {s}", .{path});
+    }
+    if (config.backlight_max_raw > 0) {
+        std.log.info("Backlight max_raw override: {d}", .{config.backlight_max_raw});
+    }
 
     // Initialize modules
     websocket.init(allocator);
     websocket.setEntityConfig(config.entity_config_json);
+    websocket.setBrightnessHandlers(&getBrightnessStateBridge, &setBrightnessPercentBridge);
     routes.init(allocator);
+    ha_light.init(allocator);
+    ha_light.setCallbacks(&setBrightnessForHaLight, &getBrightnessPercentBridge);
     signalk_client.init(allocator);
     signalk_client.setBaseUrlOverride(config.signalk_url);
     signalk_client.setBroadcaster(websocket.broadcastRaw);
@@ -138,6 +155,7 @@ pub fn main() !void {
         .token = config.supervisor_token,
     });
     ha_client.setStateUpdateCallback(native_display.enqueueStateUpdate);
+    ha_client.setStateUpdateRawCallback(native_display.handleHaRawStateUpdate);
 
     // Start the HA client background connection (connects to HA WebSocket API)
     ha_client.start() catch |err| {
@@ -150,11 +168,30 @@ pub fn main() !void {
         // Non-fatal — anchor page can still show status + retries
     };
 
+    // Start MQTT HA light entity if broker is configured
+    if (config.mqtt_host) |host| {
+        std.log.info("Starting MQTT light entity connection to {s}:{d}", .{ host, config.mqtt_port });
+        ha_light.start(.{
+            .host = host,
+            .port = config.mqtt_port,
+            .username = config.mqtt_username,
+            .password = config.mqtt_password,
+            .client_id = "ha_raspberry_touch_dashboard",
+        }) catch |err| {
+            std.log.err("Failed to start HA light MQTT: {}", .{err});
+        };
+    } else {
+        std.log.info("No MQTT host configured — HA light entity disabled (set MQTT_HOST to enable)", .{});
+    }
+
     // Start native display if hardware is present (framebuffer + touch)
     native_display.setHaCallService(&haCallServiceBridge);
     native_display.setShutdownFn(&shutdown.initiate);
+    native_display.setBrightnessChangedFn(&nativeBrightnessChangedBridge);
     native_display.setEntityConfig(config.entity_config_json);
     native_display.setDisplayRotationDegrees(config.display_rotation);
+    native_display.setBacklightPath(config.backlight_sysfs);
+    native_display.setBacklightMaxRaw(config.backlight_max_raw);
     const has_native = native_display.start() catch |err| blk: {
         std.log.err("Failed to start native display: {}", .{err});
         break :blk false;
@@ -188,6 +225,7 @@ pub fn main() !void {
 
     // Cleanup on shutdown
     native_display.stop();
+    ha_light.stop();
     signalk_client.stop();
     signalk_client.deinit();
     ha_client.stop();
@@ -303,6 +341,41 @@ fn haCallServiceBridge(domain: []const u8, service: []const u8, entity_id: []con
     };
 }
 
+fn getBrightnessStateBridge() websocket.BrightnessState {
+    const state = native_display.getBrightnessState();
+    return .{
+        .available = state.available,
+        .percent = state.percent,
+    };
+}
+
+fn setBrightnessPercentBridge(percent: u8) bool {
+    native_display.setBrightnessPercent(percent) catch |err| {
+        std.log.warn("Failed to set brightness via WS/API: {}", .{err});
+        return false;
+    };
+    return true;
+}
+
+fn setBrightnessForHaLight(percent: u8) void {
+    _ = native_display.setBrightnessPercent(percent) catch |err| {
+        std.log.warn("Failed to set brightness from HA light: {}", .{err});
+    };
+}
+
+fn getBrightnessPercentBridge() u8 {
+    const state = native_display.getBrightnessState();
+    return state.percent;
+}
+
+fn nativeBrightnessChangedBridge(percent: u8) void {
+    websocket.broadcastBrightnessState(.{
+        .available = true,
+        .percent = percent,
+    });
+    ha_light.notifyBrightness(percent);
+}
+
 /// Read configuration from environment (HA app) and /data/options.json
 fn readConfig() Config {
     var cfg = Config{};
@@ -361,6 +434,52 @@ fn readConfig() Config {
             else => 270,
         };
         std.heap.page_allocator.free(deg_str);
+    } else |_| {}
+
+    // Optional backlight sysfs path override
+    if (std.process.getEnvVarOwned(std.heap.page_allocator, "BACKLIGHT_SYSFS")) |path| {
+        if (path.len > 0) {
+            cfg.backlight_sysfs = path;
+        } else {
+            std.heap.page_allocator.free(path);
+        }
+    } else |_| {}
+
+    // Optional backlight max raw value override (brightness curve cap)
+    if (std.process.getEnvVarOwned(std.heap.page_allocator, "BACKLIGHT_MAX_RAW")) |val_str| {
+        if (val_str.len > 0) {
+            cfg.backlight_max_raw = std.fmt.parseInt(i32, val_str, 10) catch 0;
+        }
+        std.heap.page_allocator.free(val_str);
+    } else |_| {}
+
+    // MQTT broker configuration
+    if (std.process.getEnvVarOwned(std.heap.page_allocator, "MQTT_HOST")) |host| {
+        if (host.len > 0) {
+            cfg.mqtt_host = host;
+        } else {
+            std.heap.page_allocator.free(host);
+        }
+    } else |_| {}
+    if (std.process.getEnvVarOwned(std.heap.page_allocator, "MQTT_PORT")) |port_str| {
+        if (port_str.len > 0) {
+            cfg.mqtt_port = std.fmt.parseInt(u16, port_str, 10) catch 1883;
+        }
+        std.heap.page_allocator.free(port_str);
+    } else |_| {}
+    if (std.process.getEnvVarOwned(std.heap.page_allocator, "MQTT_USERNAME")) |u| {
+        if (u.len > 0) {
+            cfg.mqtt_username = u;
+        } else {
+            std.heap.page_allocator.free(u);
+        }
+    } else |_| {}
+    if (std.process.getEnvVarOwned(std.heap.page_allocator, "MQTT_PASSWORD")) |p| {
+        if (p.len > 0) {
+            cfg.mqtt_password = p;
+        } else {
+            std.heap.page_allocator.free(p);
+        }
     } else |_| {}
 
     return cfg;

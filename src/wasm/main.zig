@@ -38,6 +38,7 @@ extern fn js_sail_config_changed(entity_ptr: [*]const u8, entity_len: i32, optio
 extern fn js_sail_toggle_changed(entity_ptr: [*]const u8, entity_len: i32, state: i32) void;
 extern fn js_anchor_action(action_ptr: [*]const u8, action_len: i32, value: f64) void;
 extern fn js_power_off() void;
+extern fn js_brightness_changed(percent: i32) void;
 
 // Zig-calling-convention wrappers for the JS extern fns.
 // PlatformCallbacks uses Zig function pointers; extern fns have C/WASM calling convention.
@@ -52,6 +53,9 @@ fn wasmAnchorAction(action_ptr: [*]const u8, action_len: i32, value: f64) void {
 }
 fn wasmPowerOff() void {
     js_power_off();
+}
+fn wasmBrightnessChanged(percent: i32) void {
+    js_brightness_changed(percent);
 }
 
 /// Tick callback for LVGL — returns elapsed ms since start
@@ -90,6 +94,7 @@ export fn init(width: i32, height: i32) void {
         .sail_toggle_changed = &wasmSailToggleChanged,
         .anchor_action = &wasmAnchorAction,
         .power_off = &wasmPowerOff,
+        .brightness_changed = &wasmBrightnessChanged,
     });
 
     // Create dashboard UI
@@ -145,6 +150,10 @@ export fn update_sail_jib(value_ptr: [*]const u8, value_len: i32) void {
 
 export fn update_code0(value_ptr: [*]const u8, value_len: i32) void {
     dashboard.update_code0(value_ptr, value_len);
+}
+
+export fn update_brightness(percent: i32) void {
+    dashboard.update_brightness(percent);
 }
 
 export fn update_anchor_connection_state(state: i32) void {

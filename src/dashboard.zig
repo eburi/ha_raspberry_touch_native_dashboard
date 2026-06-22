@@ -79,6 +79,8 @@ pub const PlatformCallbacks = struct {
     anchor_action: ?*const fn (action_ptr: [*]const u8, action_len: i32, value: f64) void = null,
     /// Called when the power off long-press completes.
     power_off: ?*const fn () void = null,
+    /// Called when brightness slider value changes (0-100).
+    brightness_changed: ?*const fn (percent: i32) void = null,
 };
 
 pub fn setPlatformCallbacks(callbacks: PlatformCallbacks) void {
@@ -86,6 +88,7 @@ pub fn setPlatformCallbacks(callbacks: PlatformCallbacks) void {
     sails.setSailCallbacks(callbacks.sail_config_changed, callbacks.sail_toggle_changed);
     anchor.setAnchorActionCallback(callbacks.anchor_action);
     settings.setPowerOffCallback(callbacks.power_off);
+    settings.setBrightnessChangedCallback(callbacks.brightness_changed);
 }
 
 // ============================================================
@@ -146,6 +149,10 @@ pub fn update_sail_jib(value_ptr: [*]const u8, value_len: i32) void {
 
 pub fn update_code0(value_ptr: [*]const u8, value_len: i32) void {
     sails.update_code0(value_ptr, value_len);
+}
+
+pub fn update_brightness(percent: i32) void {
+    settings.updateBrightness(percent);
 }
 
 pub fn update_anchor_connection_state(state: i32) void {

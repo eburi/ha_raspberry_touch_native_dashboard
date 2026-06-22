@@ -1,4 +1,5 @@
 ///! Page 3: Settings — Power off with long-press animation.
+const std = @import("std");
 const lv = @import("lv");
 const theme = @import("theme.zig");
 
@@ -9,6 +10,9 @@ var power_off_bar: ?*lv.lv_obj_t = null;
 var power_off_anim_running: bool = false;
 var power_off_confirm_dialog: ?*lv.lv_obj_t = null;
 var power_off_confirm_visible: bool = false;
+var brightness_slider: ?*lv.lv_obj_t = null;
+var brightness_value_label: ?*lv.lv_obj_t = null;
+var suppress_brightness_event: bool = false;
 
 // lv_anim_t is opaque to Zig (C struct with bitfields/union), so we use a
 // raw byte buffer as backing storage. 256 bytes is generous enough for both
@@ -17,6 +21,7 @@ var power_off_anim_storage: [256]u8 align(@alignOf(*anyopaque)) = undefined;
 
 /// Platform callback for power off — set by the coordinator.
 var power_off_cb: ?*const fn () void = null;
+var brightness_changed_cb: ?*const fn (percent: i32) void = null;
 
 // ============================================================
 // Public API
@@ -26,10 +31,16 @@ pub fn setPowerOffCallback(cb: ?*const fn () void) void {
     power_off_cb = cb;
 }
 
+pub fn setBrightnessChangedCallback(cb: ?*const fn (percent: i32) void) void {
+    brightness_changed_cb = cb;
+}
+
 pub fn create(parent: ?*lv.lv_obj_t) void {
     if (parent == null) return;
 
     theme.createPageTitle(parent, "Settings", theme.PAGE_SETTINGS);
+
+    createBrightnessControls(parent);
 
     // "Power off" button — positioned in the lower-left, aligned with the title icon
     const btn = lv.lv_button_create(parent);
@@ -75,12 +86,122 @@ pub fn create(parent: ?*lv.lv_obj_t) void {
     _ = lv.lv_obj_add_event_cb(btn, powerOffReleasedCb, lv.LV_EVENT_RELEASED, null);
 }
 
+pub fn updateBrightness(percent: i32) void {
+    const slider = brightness_slider orelse return;
+    const clamped: i32 = @max(0, @min(100, percent));
+    suppress_brightness_event = true;
+    lv.lv_slider_set_value(slider, clamped, lv.LV_ANIM_OFF);
+    suppress_brightness_event = false;
+    updateBrightnessLabel(clamped);
+}
+
 // ============================================================
 // Internal helpers
 // ============================================================
 
 fn getAnimPtr() ?*lv.lv_anim_t {
     return @ptrCast(&power_off_anim_storage);
+}
+
+fn createBrightnessControls(parent: ?*lv.lv_obj_t) void {
+    if (parent == null) return;
+
+    const card = lv.lv_obj_create(parent);
+    if (card == null) return;
+
+    lv.lv_obj_set_size(card, 280, 560);
+    lv.lv_obj_align(card, lv.LV_ALIGN_TOP_LEFT, 0, theme.PAGE_TITLE_H + 12);
+    lv.lv_obj_set_style_bg_color(card, lv.lv_color_hex(theme.COL_CARD_BG), lv.LV_PART_MAIN);
+    lv.lv_obj_set_style_bg_opa(card, lv.LV_OPA_COVER, lv.LV_PART_MAIN);
+    lv.lv_obj_set_style_radius(card, 12, lv.LV_PART_MAIN);
+    lv.lv_obj_set_style_border_width(card, 2, lv.LV_PART_MAIN);
+    lv.lv_obj_set_style_border_color(card, lv.lv_color_hex(theme.COL_ACCENT_1), lv.LV_PART_MAIN);
+    lv.lv_obj_set_style_pad_all(card, 14, lv.LV_PART_MAIN);
+    lv.lv_obj_set_style_pad_row(card, 10, lv.LV_PART_MAIN);
+    lv.lv_obj_set_flex_flow(card, lv.LV_FLEX_FLOW_COLUMN);
+    lv.lv_obj_set_flex_align(card, lv.LV_FLEX_ALIGN_START, lv.LV_FLEX_ALIGN_CENTER, lv.LV_FLEX_ALIGN_CENTER);
+    lv.lv_obj_remove_flag(card, lv.LV_OBJ_FLAG_SCROLLABLE);
+
+    const title = lv.lv_label_create(card);
+    if (title) |lbl| {
+        lv.lv_label_set_text(lbl, "Brightness");
+        lv.lv_obj_set_style_text_color(lbl, lv.lv_color_hex(theme.COL_FG), lv.LV_PART_MAIN);
+        lv.lv_obj_set_style_text_font(lbl, lv.lv_font_montserrat_24, lv.LV_PART_MAIN);
+        lv.lv_obj_set_style_text_align(lbl, lv.LV_TEXT_ALIGN_CENTER, lv.LV_PART_MAIN);
+        lv.lv_obj_set_width(lbl, 252);
+    }
+
+    const slider_card = lv.lv_obj_create(card);
+    if (slider_card == null) return;
+
+    lv.lv_obj_set_size(slider_card, 220, 430);
+    lv.lv_obj_set_style_bg_color(slider_card, lv.lv_color_hex(theme.COL_BG_DARK), lv.LV_PART_MAIN);
+    lv.lv_obj_set_style_bg_opa(slider_card, lv.LV_OPA_COVER, lv.LV_PART_MAIN);
+    lv.lv_obj_set_style_radius(slider_card, 10, lv.LV_PART_MAIN);
+    lv.lv_obj_set_style_border_width(slider_card, 2, lv.LV_PART_MAIN);
+    lv.lv_obj_set_style_border_color(slider_card, lv.lv_color_hex(theme.COL_ACCENT_1), lv.LV_PART_MAIN);
+    lv.lv_obj_set_style_pad_all(slider_card, 14, lv.LV_PART_MAIN);
+    lv.lv_obj_remove_flag(slider_card, lv.LV_OBJ_FLAG_SCROLLABLE);
+
+    const slider = lv.lv_slider_create(slider_card);
+    if (slider) |s| {
+        brightness_slider = s;
+        lv.lv_obj_set_size(s, 120, 388);
+        lv.lv_obj_align(s, lv.LV_ALIGN_CENTER, 0, 0);
+        lv.lv_slider_set_range(s, 0, 100);
+        lv.lv_slider_set_value(s, 100, lv.LV_ANIM_OFF);
+
+        lv.lv_obj_set_style_bg_color(s, lv.lv_color_hex(theme.COL_BG_DARK), lv.LV_PART_MAIN);
+        lv.lv_obj_set_style_bg_opa(s, lv.LV_OPA_COVER, lv.LV_PART_MAIN);
+        lv.lv_obj_set_style_radius(s, 10, lv.LV_PART_MAIN);
+        lv.lv_obj_set_style_border_width(s, 1, lv.LV_PART_MAIN);
+        lv.lv_obj_set_style_border_color(s, lv.lv_color_hex(theme.COL_ACCENT_1), lv.LV_PART_MAIN);
+
+        lv.lv_obj_set_style_bg_color(s, lv.lv_color_hex(theme.COL_ACCENT_2), lv.LV_PART_INDICATOR);
+        lv.lv_obj_set_style_bg_opa(s, lv.LV_OPA_COVER, lv.LV_PART_INDICATOR);
+        lv.lv_obj_set_style_radius(s, 10, lv.LV_PART_INDICATOR);
+
+        lv.lv_obj_set_style_bg_color(s, lv.lv_color_hex(theme.COL_FG), lv.LV_PART_KNOB);
+        lv.lv_obj_set_style_bg_opa(s, lv.LV_OPA_COVER, lv.LV_PART_KNOB);
+        lv.lv_obj_set_style_radius(s, 8, lv.LV_PART_KNOB);
+        lv.lv_obj_set_style_pad_all(s, 10, lv.LV_PART_KNOB);
+
+        _ = lv.lv_obj_add_event_cb(s, brightnessChangedCb, lv.LV_EVENT_VALUE_CHANGED, null);
+        updateBrightnessLabel(100);
+    }
+
+    const value = lv.lv_label_create(card);
+    if (value) |lbl| {
+        brightness_value_label = lbl;
+        lv.lv_label_set_text(lbl, "100%");
+        lv.lv_obj_set_style_text_color(lbl, lv.lv_color_hex(theme.COL_FG), lv.LV_PART_MAIN);
+        lv.lv_obj_set_style_text_font(lbl, lv.lv_font_montserrat_32, lv.LV_PART_MAIN);
+        lv.lv_obj_set_style_text_align(lbl, lv.LV_TEXT_ALIGN_CENTER, lv.LV_PART_MAIN);
+        lv.lv_obj_set_width(lbl, 252);
+    }
+}
+
+fn updateBrightnessLabel(percent: i32) void {
+    const label = brightness_value_label orelse return;
+
+    var buf: [8]u8 = undefined;
+    const text = std.fmt.bufPrint(&buf, "{d}%", .{percent}) catch return;
+    if (text.len < buf.len) {
+        buf[text.len] = 0;
+        lv.lv_label_set_text(label, @ptrCast(buf[0..text.len :0]));
+    }
+}
+
+fn brightnessChangedCb(e: ?*lv.lv_event_t) callconv(.C) void {
+    if (e == null) return;
+    if (suppress_brightness_event) return;
+    const target_raw = lv.lv_event_get_target(e) orelse return;
+    const target: *lv.lv_obj_t = @ptrCast(@alignCast(target_raw));
+    const value = lv.lv_slider_get_value(target);
+    updateBrightnessLabel(value);
+    if (brightness_changed_cb) |cb| {
+        cb(value);
+    }
 }
 
 /// Exec callback for the bar animation — called by LVGL to update bar value.

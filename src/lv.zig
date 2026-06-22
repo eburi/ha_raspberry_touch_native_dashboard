@@ -156,6 +156,7 @@ pub const lv_switch_create = c.lv_switch_create;
 pub const lv_slider_create = c.lv_slider_create;
 pub const lv_slider_set_value = c.lv_slider_set_value;
 pub const lv_slider_set_range = c.lv_slider_set_range;
+pub const lv_slider_get_value = c.lv_slider_get_value;
 
 // --- Spinner ---
 pub const lv_spinner_create = c.lv_spinner_create;
@@ -211,6 +212,7 @@ pub const LV_OPA_50 = c.LV_OPA_50;
 pub const LV_PART_MAIN = c.LV_PART_MAIN;
 pub const LV_PART_INDICATOR = c.LV_PART_INDICATOR;
 pub const LV_PART_ITEMS = c.LV_PART_ITEMS;
+pub const LV_PART_KNOB = c.LV_PART_KNOB;
 pub const LV_ANIM_OFF = c.LV_ANIM_OFF;
 pub const LV_TEXT_ALIGN_LEFT = c.LV_TEXT_ALIGN_LEFT;
 pub const LV_TEXT_ALIGN_CENTER = c.LV_TEXT_ALIGN_CENTER;

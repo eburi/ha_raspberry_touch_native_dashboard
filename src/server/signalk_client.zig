@@ -284,13 +284,22 @@ fn workerLoop() void {
 fn ensureBaseUrl() ![]u8 {
     if (base_url_override) |override| {
         log.debug("Trying configured SignalK URL: {s}", .{override});
-        if (checkSignalKAvailable(override)) {
-            setBaseUrl(override);
-            savePersistentState();
-            publishStatus(.requesting, "SignalK detected");
-            return allocator.dupe(u8, override);
+        if (probeSignalKStatus(override, "/signalk/v1/api/")) |status| {
+            log.debug("Configured SignalK URL probe returned HTTP {}", .{@intFromEnum(status)});
+            if (status == .unauthorized or status == .forbidden) {
+                publishStatus(.requesting, "SignalK detected (auth required)");
+            } else {
+                publishStatus(.requesting, "SignalK detected");
+            }
+        } else |err| {
+            log.warn("Configured SignalK URL probe failed: {}", .{err});
         }
-        log.warn("Configured SignalK URL is unreachable: {s}", .{override});
+
+        // User explicitly configured this URL; keep trying auth flow even when probe
+        // returns an auth-related or unexpected status.
+        setBaseUrl(override);
+        savePersistentState();
+        return allocator.dupe(u8, override);
     }
 
     if (getBaseUrl()) |saved| {
@@ -436,13 +445,18 @@ fn fetchAndBroadcast(base: []const u8, token: []const u8) !bool {
 }
 
 fn checkSignalKAvailable(base: []const u8) bool {
-    const result = getNoToken(base, "/signalk/v1/api/") catch |err| {
+    const status = probeSignalKStatus(base, "/signalk/v1/api/") catch |err| {
         log.debug("SignalK probe failed at {s}: {}", .{ base, err });
         return false;
     };
-    defer allocator.free(result);
-    log.debug("SignalK probe succeeded at {s}", .{base});
-    return result.len > 0;
+
+    if (status == .ok or status == .accepted or status == .created or status == .unauthorized or status == .forbidden) {
+        log.debug("SignalK probe succeeded at {s} with HTTP {}", .{ base, @intFromEnum(status) });
+        return true;
+    }
+
+    log.debug("SignalK probe rejected at {s} with HTTP {}", .{ base, @intFromEnum(status) });
+    return false;
 }
 
 /// Discover SignalK via mDNS by querying for _signalk-http._tcp.local.
@@ -803,6 +817,28 @@ fn request(method: std.http.Method, base: []const u8, path: []const u8, maybe_to
     }
 
     return out.toOwnedSlice();
+}
+
+fn probeSignalKStatus(base: []const u8, path: []const u8) !std.http.Status {
+    const url = try std.fmt.allocPrint(allocator, "{s}{s}", .{ base, path });
+    defer allocator.free(url);
+
+    const uri = try std.Uri.parse(url);
+    var client = std.http.Client{ .allocator = allocator };
+    defer client.deinit();
+
+    var header_buf: [4096]u8 = undefined;
+
+    var req = try client.open(.GET, uri, .{
+        .server_header_buffer = &header_buf,
+    });
+    defer req.deinit();
+
+    try req.send();
+    try req.finish();
+    try req.wait();
+
+    return req.response.status;
 }
 
 fn ensureClientId() []u8 {

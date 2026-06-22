@@ -100,6 +100,7 @@ const DEFAULT_ENTITY_CONFIG = {
     sail_main: "input_select.sail_configuration_main",
     sail_jib: "input_select.sail_configuration_jib",
     sail_code0: "input_boolean.sail_configuration_code_0_set",
+    brightness: "light.dashboard_brightness",
     tank_fuel: "sensor.victron_mqtt_tank_23_tank_level",
     tank_water_port: "sensor.victron_mqtt_tank_21_tank_level",
     tank_water_stbd: "sensor.victron_mqtt_tank_22_tank_level",
@@ -118,6 +119,7 @@ const SENSOR_ID_DATETIME = 14;
 // Sail and toggle entities (built from entityConfig)
 let SAIL_SELECT_ENTITIES = [];
 let TOGGLE_ENTITY = "";
+let BRIGHTNESS_ENTITY = "";
 
 /**
  * Rebuild all entity ID lookup maps from the current entityConfig.
@@ -148,6 +150,7 @@ function rebuildEntityMaps() {
     if (entityConfig.sail_jib) SAIL_SELECT_ENTITIES.push(entityConfig.sail_jib);
 
     TOGGLE_ENTITY = entityConfig.sail_code0 || "";
+    BRIGHTNESS_ENTITY = entityConfig.brightness || "";
 }
 
 // Initialize maps with defaults
@@ -310,6 +313,15 @@ function js_anchor_action(action_ptr, action_len, value) {
     }
 }
 
+function js_brightness_changed(percent) {
+    if (ws && ws.readyState === WebSocket.OPEN) {
+        ws.send(JSON.stringify({
+            type: "brightness_set",
+            percent: Number(percent),
+        }));
+    }
+}
+
 /**
  * Write a string into WASM scratch memory and return { ptr, len }.
  * Uses a fixed scratch area at offset 60MB in WASM linear memory.
@@ -450,6 +462,23 @@ function handleStateUpdate(entityId, state, attributes) {
         const s = writeStringToWasm(state);
         if (s) wasm.instance.exports.update_code0(s.ptr, s.len);
         return;
+    }
+
+    if (BRIGHTNESS_ENTITY && entityId === BRIGHTNESS_ENTITY) {
+        const n = Number(state);
+        if (Number.isFinite(n)) {
+            wasm.instance.exports.update_brightness(Math.max(0, Math.min(100, Math.round(n))));
+            return;
+        }
+
+        const lc = String(state).toLowerCase();
+        if (lc === "on") {
+            wasm.instance.exports.update_brightness(100);
+            return;
+        }
+        if (lc === "off") {
+            wasm.instance.exports.update_brightness(0);
+        }
     }
 }
 
@@ -834,6 +863,7 @@ function connectWebSocket() {
                     HA_DATETIME_ENTITY,
                     ...SAIL_SELECT_ENTITIES,
                     TOGGLE_ENTITY,
+                    BRIGHTNESS_ENTITY,
                 ],
             }));
             // Request current states
@@ -943,6 +973,13 @@ function handleWSMessage(msg) {
         anchorStatusMessage = msg.message || "SignalK status";
         setAnchorStatusText(anchorStatusMessage);
         updateAnchorConnectionUi();
+    } else if (msg.type === "brightness_state") {
+        if (!msg || !msg.available) return;
+        const n = Number(msg.percent);
+        if (!Number.isFinite(n)) return;
+        if (wasm && wasm.instance.exports.update_brightness) {
+            wasm.instance.exports.update_brightness(Math.max(0, Math.min(100, Math.round(n))));
+        }
     } else if (msg.type === "signalk_data") {
         ingestSignalKData(msg);
         updateAnchorConnectionUi();
@@ -980,6 +1017,7 @@ async function main() {
                 js_sail_config_changed: js_sail_config_changed,
                 js_sail_toggle_changed: js_sail_toggle_changed,
                 js_anchor_action: js_anchor_action,
+                js_brightness_changed: js_brightness_changed,
                 js_power_off: function() {
                     console.log("[Power] Sending power_off to server");
                     if (ws && ws.readyState === WebSocket.OPEN) {

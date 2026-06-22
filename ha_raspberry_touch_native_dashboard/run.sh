@@ -24,6 +24,12 @@ if [ -f "$OPTIONS_FILE" ]; then
     LOG_LEVEL="$(jq -r '.log_level // "info"' "$OPTIONS_FILE")"
     DISPLAY_ROTATION="$(jq -r '.display_rotation // 270' "$OPTIONS_FILE")"
     SIGNALK_URL="$(jq -r '.signalk_url // ""' "$OPTIONS_FILE")"
+    BACKLIGHT_SYSFS="$(jq -r '.backlight_sysfs // ""' "$OPTIONS_FILE")"
+    BACKLIGHT_MAX_RAW="$(jq -r '.backlight_max_raw // 0' "$OPTIONS_FILE")"
+    MQTT_HOST="$(jq -r '.mqtt_host // ""' "$OPTIONS_FILE")"
+    MQTT_PORT="$(jq -r '.mqtt_port // 1883' "$OPTIONS_FILE")"
+    MQTT_USERNAME="$(jq -r '.mqtt_username // ""' "$OPTIONS_FILE")"
+    MQTT_PASSWORD="$(jq -r '.mqtt_password // ""' "$OPTIONS_FILE")"
 
     # Build entity config JSON from options (only include non-empty values)
     ENTITY_CONFIG="$(jq -c '{
@@ -45,6 +51,7 @@ if [ -f "$OPTIONS_FILE" ]; then
         sail_main:           .entity_sail_main,
         sail_jib:            .entity_sail_jib,
         sail_code0:          .entity_sail_code0,
+        brightness:          .entity_brightness,
         tank_fuel:           .entity_tank_fuel,
         tank_water_port:     .entity_tank_water_port,
         tank_water_stbd:     .entity_tank_water_stbd,
@@ -56,6 +63,12 @@ else
     LOG_LEVEL="info"
     DISPLAY_ROTATION="270"
     SIGNALK_URL=""
+    BACKLIGHT_SYSFS=""
+    BACKLIGHT_MAX_RAW="0"
+    MQTT_HOST=""
+    MQTT_PORT="1883"
+    MQTT_USERNAME=""
+    MQTT_PASSWORD=""
     ENTITY_CONFIG="{}"
 fi
 
@@ -65,6 +78,15 @@ log_info "Display rotation: ${DISPLAY_ROTATION}"
 if [ -n "${SIGNALK_URL}" ]; then
     log_info "SignalK URL override: ${SIGNALK_URL}"
 fi
+if [ -n "${BACKLIGHT_SYSFS}" ]; then
+    log_info "Backlight sysfs override: ${BACKLIGHT_SYSFS}"
+fi
+if [ "${BACKLIGHT_MAX_RAW}" -gt 0 ] 2>/dev/null; then
+    log_info "Backlight max_raw override: ${BACKLIGHT_MAX_RAW}"
+fi
+if [ -n "${MQTT_HOST}" ]; then
+    log_info "MQTT host: ${MQTT_HOST}:${MQTT_PORT}"
+fi
 log_info "Entity config: ${ENTITY_CONFIG}"
 
 export PORT
@@ -72,6 +94,25 @@ export WEB_ROOT="/app/web"
 export LOG_LEVEL
 export DISPLAY_ROTATION
 export ENTITY_CONFIG
+export BACKLIGHT_MAX_RAW
+export MQTT_HOST
+export MQTT_PORT
+export MQTT_USERNAME
+export MQTT_PASSWORD
+
+if [ -z "${BACKLIGHT_SYSFS}" ] && [ -d /sys/class/backlight ]; then
+    for candidate in /sys/class/backlight/*; do
+        if [ -d "${candidate}" ] && [ -w "${candidate}/brightness" ] && [ -r "${candidate}/max_brightness" ]; then
+            BACKLIGHT_SYSFS="${candidate}"
+            break
+        fi
+    done
+fi
+
+if [ -n "${BACKLIGHT_SYSFS}" ]; then
+    export BACKLIGHT_SYSFS
+fi
+
 if [ -n "${SIGNALK_URL}" ]; then
     export SIGNALK_URL
 fi
@@ -81,6 +122,16 @@ if [ -e /dev/fb0 ]; then
     log_info "Framebuffer /dev/fb0 detected"
 else
     log_warning "No framebuffer — web-only mode"
+fi
+
+if [ -n "${BACKLIGHT_SYSFS}" ]; then
+    if [ -w "${BACKLIGHT_SYSFS}/brightness" ]; then
+        log_info "Backlight control enabled via ${BACKLIGHT_SYSFS}/brightness"
+    else
+        log_warning "Backlight path ${BACKLIGHT_SYSFS}/brightness is not writable"
+    fi
+else
+    log_warning "No writable backlight sysfs path found"
 fi
 
 # SUPERVISOR_TOKEN is injected by HA when homeassistant_api: true

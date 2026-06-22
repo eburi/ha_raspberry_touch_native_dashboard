@@ -1,7 +1,7 @@
 # Home Assistant App configuration
 # https://developers.home-assistant.io/docs/apps
 name: "Raspberry Pi Touchscreen native Dashboard for HAOS"
-version: "0.10.3"
+version: "0.12.0"
 slug: ha_raspberry_touch_native_dashboard
 description: >-
   Touch-screen dashboard built with LVGL graphics library, compiled to WASM
@@ -55,6 +55,12 @@ options:
   log_level: info
   display_rotation: 270
   signalk_url: ""
+  backlight_sysfs: ""
+  backlight_max_raw: 0
+  mqtt_host: ""
+  mqtt_port: 1883
+  mqtt_username: ""
+  mqtt_password: ""
   entity_latitude: "sensor.primrose_latitude"
   entity_longitude: "sensor.primrose_longitude"
   entity_log: "sensor.primrose_log"
@@ -73,6 +79,7 @@ options:
   entity_sail_main: "input_select.sail_configuration_main"
   entity_sail_jib: "input_select.sail_configuration_jib"
   entity_sail_code0: "input_boolean.sail_configuration_code_0_set"
+  entity_brightness: "light.dashboard_brightness"
   entity_tank_fuel: "sensor.victron_mqtt_tank_23_tank_level"
   entity_tank_water_port: "sensor.victron_mqtt_tank_21_tank_level"
   entity_tank_water_stbd: "sensor.victron_mqtt_tank_22_tank_level"
@@ -82,6 +89,12 @@ schema:
   log_level: "list(error|warning|info|debug)"
   display_rotation: "list(0|90|180|270)"
   signalk_url: "str?"
+  backlight_sysfs: "str?"
+  backlight_max_raw: "int(0,65535)?"
+  mqtt_host: "str?"
+  mqtt_port: "int(1,65535)?"
+  mqtt_username: "str?"
+  mqtt_password: "str?"
   entity_latitude: "str?"
   entity_longitude: "str?"
   entity_log: "str?"
@@ -100,6 +113,7 @@ schema:
   entity_sail_main: "str?"
   entity_sail_jib: "str?"
   entity_sail_code0: "str?"
+  entity_brightness: "str?"
   entity_tank_fuel: "str?"
   entity_tank_water_port: "str?"
   entity_tank_water_stbd: "str?"

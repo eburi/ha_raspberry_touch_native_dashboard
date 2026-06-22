@@ -16,6 +16,7 @@ const dashboard = @import("dashboard");
 const Fbdev = @import("fbdev").Fbdev;
 const Evdev = @import("evdev").Evdev;
 const probe_mod = @import("probe");
+const Backlight = @import("backlight").Backlight;
 
 const log = std.log.scoped(.native);
 
@@ -48,6 +49,15 @@ var lvgl_thread: ?std.Thread = null;
 var should_stop: std.atomic.Value(bool) = std.atomic.Value(bool).init(false);
 var is_running: bool = false;
 var configured_rotation_degrees: u16 = 270;
+var configured_backlight_path: ?[]const u8 = null;
+var configured_backlight_max_raw: i32 = 0;
+
+var backlight: ?Backlight = null;
+var backlight_percent: u8 = 100;
+var backlight_mutex: std.Thread.Mutex = .{};
+
+var pending_brightness_percent: ?u8 = null;
+var pending_brightness_mutex: std.Thread.Mutex = .{};
 
 var pending_updates: [MAX_PENDING_UPDATES]PendingUpdate = undefined;
 var pending_head: usize = 0;
@@ -61,6 +71,7 @@ var ha_call_service_fn: ?*const fn (domain: []const u8, service: []const u8, ent
 
 /// Callback for host shutdown — will be set by the server before start()
 var shutdown_fn: ?*const fn () void = null;
+var brightness_changed_fn: ?*const fn (percent: u8) void = null;
 
 /// Entity config JSON (kept for the LVGL thread to parse during init)
 var entity_config_json: []const u8 = "{}";
@@ -68,6 +79,7 @@ var entity_config_json: []const u8 = "{}";
 var sensor_entities: [SENSOR_COUNT]EntityBuf = initDefaultSensorEntities();
 var tank_entities: [TANK_COUNT]EntityBuf = initDefaultTankEntities();
 var sail_entities: [dashboard.ENTITY_COUNT]EntityBuf = initDefaultSailEntities();
+var brightness_entity: EntityBuf = initDefaultBrightnessEntity();
 
 /// Set the function used to call HA services.
 /// Must be called before start() so platform callbacks can reach HA.
@@ -79,6 +91,72 @@ pub fn setHaCallService(func: *const fn (domain: []const u8, service: []const u8
 /// Must be called before start().
 pub fn setShutdownFn(func: *const fn () void) void {
     shutdown_fn = func;
+}
+
+/// Set a callback that receives brightness changes from native controls.
+pub fn setBrightnessChangedFn(func: *const fn (percent: u8) void) void {
+    brightness_changed_fn = func;
+}
+
+pub const BrightnessState = struct {
+    available: bool,
+    percent: u8,
+};
+
+pub fn getBrightnessState() BrightnessState {
+    backlight_mutex.lock();
+    defer backlight_mutex.unlock();
+
+    return .{
+        .available = backlight != null,
+        .percent = backlight_percent,
+    };
+}
+
+/// Configure a specific backlight sysfs directory (e.g. /sys/class/backlight/rpi_backlight).
+pub fn setBacklightPath(path: ?[]const u8) void {
+    configured_backlight_path = path;
+}
+
+/// Set the maximum raw value to write to sysfs brightness.
+/// 0 means use the hardware max_brightness value.
+/// Values ~100 often give the full visual range on RPi displays.
+pub fn setBacklightMaxRaw(max_raw: i32) void {
+    configured_backlight_max_raw = max_raw;
+}
+
+/// Set brightness from non-LVGL threads (REST/API).
+pub fn setBrightnessPercent(percent: u8) !void {
+    try setBrightnessPercentInternal(percent, true, true);
+}
+
+fn setBrightnessFromHaState(percent: u8) !void {
+    try setBrightnessPercentInternal(percent, false, true);
+}
+
+fn setBrightnessPercentInternal(percent: u8, sync_to_ha: bool, queue_ui_update: bool) !void {
+    const clamped: u8 = @min(percent, 100);
+
+    {
+        backlight_mutex.lock();
+        defer backlight_mutex.unlock();
+
+        const bl = backlight orelse return error.BacklightUnavailable;
+        try bl.setPercent(clamped);
+        backlight_percent = clamped;
+    }
+
+    if (queue_ui_update) {
+        pending_brightness_mutex.lock();
+        pending_brightness_percent = clamped;
+        pending_brightness_mutex.unlock();
+    }
+
+    if (sync_to_ha) {
+        syncBrightnessToHa(clamped);
+    }
+
+    notifyBrightnessChanged(clamped);
 }
 
 /// Set the entity configuration JSON. Must be called before start().
@@ -113,6 +191,19 @@ pub fn enqueueStateUpdate(entity_id: []const u8, state: []const u8) void {
     pending_tail = (pending_tail + 1) % MAX_PENDING_UPDATES;
     pending_count += 1;
     queue_full_warned = false;
+}
+
+/// Handle raw Home Assistant state updates that should bypass display formatting.
+/// Used for entities like light.dashboard_brightness where the canonical state
+/// needs to be interpreted directly.
+pub fn handleHaRawStateUpdate(entity_id: []const u8, state: []const u8) void {
+    if (!entityEquals(brightness_entity, entity_id)) return;
+
+    if (parseBrightnessState(state)) |percent| {
+        setBrightnessFromHaState(percent) catch |err| {
+            log.warn("Failed to apply raw brightness state from HA: {}", .{err});
+        };
+    }
 }
 
 /// Set display rotation in degrees (valid values: 0, 90, 180, 270).
@@ -155,6 +246,8 @@ pub fn start() !bool {
     const physical_height = if (fbdev.height > 0) fbdev.height else DEFAULT_HEIGHT;
 
     fbdev.rotation = rotationFromDegrees(configured_rotation_degrees);
+
+    initBacklight();
 
     var ui_width = physical_width;
     var ui_height = physical_height;
@@ -203,6 +296,7 @@ pub fn stop() void {
 
     evdev.deinit();
     fbdev.deinit();
+    deinitBacklight();
     is_running = false;
     resetPendingQueue();
 
@@ -237,6 +331,7 @@ fn lvglLoop(width: u32, height: u32) void {
         .sail_toggle_changed = &nativeSailToggleChanged,
         .anchor_action = &nativeAnchorAction,
         .power_off = &nativePowerOff,
+        .brightness_changed = &nativeBrightnessChanged,
     });
 
     // Apply entity config from server config (sail entity IDs)
@@ -245,11 +340,13 @@ fn lvglLoop(width: u32, height: u32) void {
     // Create the dashboard
     dashboard.init(width, height);
     dashboard.create();
+    dashboard.update_brightness(@intCast(backlight_percent));
 
     log.info("LVGL initialized, entering render loop", .{});
 
     // Main render loop — call lv_timer_handler at ~30fps
     while (!should_stop.load(.acquire)) {
+        applyPendingBrightnessUpdate();
         applyPendingStateUpdates();
         _ = lv.lv_timer_handler();
         std.time.sleep(33 * std.time.ns_per_ms); // ~30fps
@@ -326,6 +423,81 @@ fn nativePowerOff() void {
         doShutdown();
     } else {
         log.warn("No shutdown function set — power off ignored", .{});
+    }
+}
+
+fn nativeBrightnessChanged(percent: i32) void {
+    const clamped: u8 = @intCast(@max(0, @min(100, percent)));
+
+    setBrightnessPercent(clamped) catch |err| {
+        log.warn("Failed to set backlight brightness to {d}%: {}", .{ clamped, err });
+        return;
+    };
+}
+
+fn notifyBrightnessChanged(percent: u8) void {
+    if (brightness_changed_fn) |cb| {
+        cb(percent);
+    }
+}
+
+fn syncBrightnessToHa(percent: u8) void {
+    const entity_id = brightness_entity.buf[0..brightness_entity.len];
+    if (entity_id.len == 0) return;
+
+    if (ha_call_service_fn) |callService| {
+        if (percent == 0) {
+            callService("light", "turn_off", entity_id, null);
+        } else {
+            var buf: [64]u8 = undefined;
+            const extra = std.fmt.bufPrint(&buf, "\"brightness_pct\":{d}", .{percent}) catch return;
+            callService("light", "turn_on", entity_id, extra);
+        }
+    }
+}
+
+fn initBacklight() void {
+    backlight_mutex.lock();
+    defer backlight_mutex.unlock();
+
+    if (backlight != null) return;
+
+    backlight = Backlight.discover(std.heap.page_allocator, configured_backlight_path) catch |err| {
+        log.warn("Backlight discovery failed: {}", .{err});
+        return;
+    };
+
+    if (backlight) |*bl| {
+        if (configured_backlight_max_raw > 0) {
+            bl.setMaxRawOverride(configured_backlight_max_raw);
+            log.info("Backlight max_raw override set to {d}", .{configured_backlight_max_raw});
+        }
+        backlight_percent = bl.getPercent() catch |err| blk: {
+            log.warn("Failed to read initial backlight brightness: {}", .{err});
+            break :blk 100;
+        };
+        log.info("Backlight initialized at {d}%", .{backlight_percent});
+    }
+}
+
+fn deinitBacklight() void {
+    backlight_mutex.lock();
+    defer backlight_mutex.unlock();
+
+    if (backlight) |*bl| {
+        bl.deinit();
+    }
+    backlight = null;
+}
+
+fn applyPendingBrightnessUpdate() void {
+    pending_brightness_mutex.lock();
+    const maybe_percent = pending_brightness_percent;
+    pending_brightness_percent = null;
+    pending_brightness_mutex.unlock();
+
+    if (maybe_percent) |percent| {
+        dashboard.update_brightness(@intCast(percent));
     }
 }
 
@@ -417,12 +589,25 @@ fn applyEntityConfig() void {
             }
         }
     }
+
+    if (obj.get("brightness")) |val| {
+        switch (val) {
+            .string => |s| {
+                if (s.len > 0) {
+                    setEntityBuf(&brightness_entity, s);
+                    log.info("Entity brightness = {s}", .{s});
+                }
+            },
+            else => {},
+        }
+    }
 }
 
 fn applyDefaultEntityMappings() void {
     sensor_entities = initDefaultSensorEntities();
     tank_entities = initDefaultTankEntities();
     sail_entities = initDefaultSailEntities();
+    brightness_entity = initDefaultBrightnessEntity();
 
     for (0..dashboard.ENTITY_COUNT) |slot| {
         const entity = sail_entities[slot].buf[0..sail_entities[slot].len];
@@ -494,6 +679,41 @@ fn applyNativeState(entity_id: []const u8, state: []const u8) void {
     }
 }
 
+fn parseBrightnessState(state: []const u8) ?u8 {
+    const trimmed = std.mem.trim(u8, state, " \t\r\n");
+    if (trimmed.len == 0) return null;
+
+    if (trimmed.len > 2 and trimmed[trimmed.len - 1] == '%') {
+        const no_pct = std.mem.trim(u8, trimmed[0 .. trimmed.len - 1], " \t\r\n");
+        if (no_pct.len > 0) {
+            if (std.fmt.parseInt(i32, no_pct, 10)) |n_pct| {
+                return @intCast(@max(0, @min(100, n_pct)));
+            } else |_| {}
+            if (std.fmt.parseFloat(f64, no_pct)) |f_pct| {
+                if (std.math.isFinite(f_pct)) {
+                    const n_pct: i32 = @intFromFloat(@round(f_pct));
+                    return @intCast(@max(0, @min(100, n_pct)));
+                }
+            } else |_| {}
+        }
+    }
+
+    if (std.ascii.eqlIgnoreCase(trimmed, "on")) return 100;
+    if (std.ascii.eqlIgnoreCase(trimmed, "off")) return 0;
+
+    if (std.fmt.parseInt(i32, trimmed, 10)) |n| {
+        return @intCast(@max(0, @min(100, n)));
+    } else |_| {}
+
+    if (std.fmt.parseFloat(f64, trimmed)) |f| {
+        if (!std.math.isFinite(f)) return null;
+        const n: i32 = @intFromFloat(@round(f));
+        return @intCast(@max(0, @min(100, n)));
+    } else |_| {}
+
+    return null;
+}
+
 fn initDefaultSensorEntities() [SENSOR_COUNT]EntityBuf {
     var ids: [SENSOR_COUNT]EntityBuf = .{EntityBuf{}} ** SENSOR_COUNT;
     const defaults = [SENSOR_COUNT][]const u8{
@@ -544,6 +764,12 @@ fn initDefaultSailEntities() [dashboard.ENTITY_COUNT]EntityBuf {
         setEntityBuf(&ids[i], defaults[i]);
     }
     return ids;
+}
+
+fn initDefaultBrightnessEntity() EntityBuf {
+    var id = EntityBuf{};
+    setEntityBuf(&id, "light.dashboard_brightness");
+    return id;
 }
 
 fn resetPendingQueue() void {
